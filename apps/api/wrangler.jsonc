@@ -18,7 +18,7 @@
     },
   ],
   "vars": {
-    "ALLOWED_ORIGINS": "http://localhost:5173,http://127.0.0.1:5173,https://Arhaan2.github.io",
+    "ALLOWED_ORIGINS": "http://localhost:5173,http://127.0.0.1:5173,https://arhaan2.github.io",
     "CHALLENGE_TARGET": "1000000",
     "CHALLENGE_START_ISO": "2026-07-24T00:00:00-07:00",
     "CHALLENGE_DEADLINE_ISO": "2035-01-01T00:00:00-08:00",

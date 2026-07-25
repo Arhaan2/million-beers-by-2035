@@ -150,7 +150,7 @@ The smoke script uses a fresh +1 event, verifies an identical retry is idempoten
 
 ```bash
 API_BASE_URL=https://your-worker.workers.dev \
-ORIGIN=https://Arhaan2.github.io \
+ORIGIN=https://arhaan2.github.io \
 BEER_ADMIN_PIN='enter-code-in-your-shell' \
 npm run smoke
 ```
