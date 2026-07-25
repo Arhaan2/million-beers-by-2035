@@ -4,7 +4,7 @@ One crew. One impossible number. By 2035.
 
 The Million Beer Project is a public, responsive dashboard for a collective challenge to record 1,000,000 beers before January 1, 2035. Anyone can read the live scoreboard. Crew members with the shared code can append positive entries or explicit negative corrections.
 
-- Live site: <https://Arhaan2.github.io/million-beers-by-2035/>
+- Live site: <https://arhaan2.github.io/million-beers-by-2035/>
 - API health: <https://million-beers-api.arhaan2.workers.dev/health>
 
 This is a counter, not a consumption recommendation. It never calculates a per-person target.
