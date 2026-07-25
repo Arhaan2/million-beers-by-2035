@@ -1,0 +1,5 @@
+node_modules/
+**/dist/
+**/coverage/
+**/.wrangler/
+apps/api/worker-configuration.d.ts

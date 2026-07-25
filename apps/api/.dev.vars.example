@@ -1,0 +1,3 @@
+BEER_ADMIN_PIN=replace-with-a-development-code
+SESSION_SIGNING_SECRET=replace-with-at-least-32-random-characters
+RATE_LIMIT_SALT=replace-with-at-least-32-random-characters

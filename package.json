@@ -1,0 +1,41 @@
+{
+  "name": "million-beers-by-2035",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "dev:web": "npm run dev --workspace @million-beers/web",
+    "dev:api": "npm run dev --workspace @million-beers/api",
+    "build": "npm run build:api && npm run build:web",
+    "build:web": "npm run build --workspace @million-beers/web",
+    "build:api": "npm run build --workspace @million-beers/api",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "eslint . --max-warnings 0",
+    "format": "prettier . --write",
+    "format:check": "prettier . --check",
+    "test": "npm run test:web && npm run test:api",
+    "test:web": "npm run test --workspace @million-beers/web",
+    "test:api": "npm run test --workspace @million-beers/api",
+    "db:migrate:local": "npm run db:migrate:local --workspace @million-beers/api",
+    "db:migrate:remote": "npm run db:migrate:remote --workspace @million-beers/api",
+    "deploy:api": "npm run deploy --workspace @million-beers/api",
+    "smoke": "node scripts/smoke-test.mjs"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "24.13.3",
+    "eslint": "10.8.0",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "eslint-plugin-react-refresh": "0.5.3",
+    "globals": "17.7.0",
+    "prettier": "3.9.6",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.65.0"
+  }
+}

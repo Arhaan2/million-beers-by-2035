@@ -1,0 +1,32 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "million-beers-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-24",
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "million-beers-production",
+      "database_id": "11106118-5410-479a-9b3a-ea289ef6bbf2",
+      "migrations_dir": "migrations",
+    },
+  ],
+  "vars": {
+    "ALLOWED_ORIGINS": "http://localhost:5173,http://127.0.0.1:5173,https://Arhaan2.github.io",
+    "CHALLENGE_TARGET": "1000000",
+    "CHALLENGE_START_ISO": "2026-07-24T00:00:00-07:00",
+    "CHALLENGE_DEADLINE_ISO": "2035-01-01T00:00:00-08:00",
+    "CHALLENGE_TIMEZONE": "America/Los_Angeles",
+    "SESSION_TTL_SECONDS": "43200",
+    "LOGIN_RATE_LIMIT_MAX": "5",
+    "LOGIN_RATE_LIMIT_WINDOW_SECONDS": "900",
+    "MUTATION_RATE_LIMIT_MAX": "30",
+    "MUTATION_RATE_LIMIT_WINDOW_SECONDS": "600",
+  },
+}
