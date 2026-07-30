@@ -1,9 +1,9 @@
 import { compareCrewCode, createSessionToken, requireEditorSession, stableHash } from './auth';
 import { assertAllowedBrowserOrigin, getAllowedOrigin, optionsResponse } from './cors';
-import { getSummary, recordEvent } from './database';
+import { createBeerEntry, getSummary, recordEvent } from './database';
 import { cleanExpiredRateLimits, clearRateLimit, consumeRateLimit } from './rateLimit';
 import { ApiError, errorResponse, jsonResponse } from './responses';
-import { parseEventBody, parseLoginBody, readJsonBody } from './schemas';
+import { parseEntryBody, parseEventBody, parseLoginBody, readJsonBody } from './schemas';
 import type { RequestContext } from './types';
 
 function positiveInteger(value: string, fallback: number): number {
@@ -54,7 +54,7 @@ async function handleSession(
   return jsonResponse({ valid: true, expiresAt: session.exp }, context);
 }
 
-async function handleEvent(request: Request, env: Env, context: RequestContext): Promise<Response> {
+async function authorizeMutation(request: Request, env: Env): Promise<string> {
   assertAllowedBrowserOrigin(request, env);
   const session = await requireEditorSession(request, env);
   const mutationKey = await stableHash(
@@ -70,9 +70,20 @@ async function handleEvent(request: Request, env: Env, context: RequestContext):
   );
   if (!limit.allowed)
     throw new ApiError(429, 'Too many updates. Try again later.', 'mutation_limited');
+  return stableHash(session.jti, env.RATE_LIMIT_SALT);
+}
+
+async function handleEvent(request: Request, env: Env, context: RequestContext): Promise<Response> {
+  const sessionFingerprint = await authorizeMutation(request, env);
   const input = parseEventBody(await readJsonBody(request));
-  const sessionFingerprint = await stableHash(session.jti, env.RATE_LIMIT_SALT);
   const result = await recordEvent(env, input, sessionFingerprint);
+  return jsonResponse(result, context, { status: result.idempotent ? 200 : 201 });
+}
+
+async function handleEntry(request: Request, env: Env, context: RequestContext): Promise<Response> {
+  const sessionFingerprint = await authorizeMutation(request, env);
+  const input = parseEntryBody(await readJsonBody(request));
+  const result = await createBeerEntry(env, input, sessionFingerprint);
   return jsonResponse(result, context, { status: result.idempotent ? 200 : 201 });
 }
 
@@ -98,6 +109,9 @@ async function route(
   }
   if (request.method === 'POST' && pathname === '/api/events') {
     return handleEvent(request, env, context);
+  }
+  if (request.method === 'POST' && pathname === '/api/entries') {
+    return handleEntry(request, env, context);
   }
   throw new ApiError(404, 'Not found.', 'not_found');
 }

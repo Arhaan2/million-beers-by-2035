@@ -1,5 +1,5 @@
 import { ApiError } from './responses';
-import type { EventInput } from './types';
+import type { AllocationInput, EntryInput, EventInput } from './types';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const MAX_BODY_BYTES = 16 * 1024;
@@ -40,16 +40,26 @@ export function parseLoginBody(value: unknown): string {
   return value.code;
 }
 
-function normalizeContributor(value: unknown): string {
-  if (value === undefined || value === null || value === '') return 'Anonymous';
+function normalizeContributor(value: unknown, allowAnonymous = true): string {
+  if (value === undefined || value === null || value === '') {
+    if (allowAnonymous) return 'Anonymous';
+    throw new ApiError(400, 'Every group participant needs a name.', 'invalid_entry');
+  }
   if (typeof value !== 'string')
     throw new ApiError(400, 'Contributor must be text.', 'invalid_event');
   const normalized = value.trim().replace(/\s+/gu, ' ');
-  if (!normalized) return 'Anonymous';
+  if (!normalized) {
+    if (allowAnonymous) return 'Anonymous';
+    throw new ApiError(400, 'Every group participant needs a name.', 'invalid_entry');
+  }
   if ([...normalized].length > 30) {
     throw new ApiError(400, 'Contributor must be 30 characters or fewer.', 'invalid_event');
   }
   return normalized;
+}
+
+export function normalizeContributorKey(name: string): string {
+  return name.normalize('NFKC').toLocaleLowerCase('en-US');
 }
 
 function normalizeNote(value: unknown): string | null {
@@ -92,4 +102,93 @@ export function parseEventBody(value: unknown): EventInput {
     );
   }
   return { amount, contributor, note, idempotencyKey };
+}
+
+function parseAllocation(value: unknown, groupMode: boolean): AllocationInput {
+  if (!isRecord(value)) {
+    throw new ApiError(
+      400,
+      'Every allocation must include a participant and amount.',
+      'invalid_entry',
+    );
+  }
+  const contributor = normalizeContributor(value.contributor, !groupMode);
+  const amount = value.amount;
+  if (
+    typeof amount !== 'number' ||
+    !Number.isInteger(amount) ||
+    amount === 0 ||
+    amount < -250 ||
+    amount > 250
+  ) {
+    throw new ApiError(
+      400,
+      'Every allocation must be a nonzero integer from -250 through 250.',
+      'invalid_entry',
+    );
+  }
+  return { contributor, contributorKey: normalizeContributorKey(contributor), amount };
+}
+
+export function parseEntryBody(value: unknown): EntryInput {
+  if (!isRecord(value)) throw new ApiError(400, 'Invalid entry payload.', 'invalid_entry');
+  const { totalAmount, idempotencyKey } = value;
+  if (
+    typeof totalAmount !== 'number' ||
+    !Number.isInteger(totalAmount) ||
+    totalAmount === 0 ||
+    totalAmount < -250 ||
+    totalAmount > 250
+  ) {
+    throw new ApiError(
+      400,
+      'Total amount must be a nonzero integer from -250 through 250.',
+      'invalid_entry',
+    );
+  }
+  if (typeof idempotencyKey !== 'string' || !UUID_PATTERN.test(idempotencyKey)) {
+    throw new ApiError(400, 'A valid idempotency key is required.', 'invalid_entry');
+  }
+  if (!Array.isArray(value.allocations) || value.allocations.length === 0) {
+    throw new ApiError(400, 'At least one allocation is required.', 'invalid_entry');
+  }
+  if (value.allocations.length > 25) {
+    throw new ApiError(400, 'An entry can include at most 25 participants.', 'invalid_entry');
+  }
+
+  const groupMode = value.allocations.length > 1;
+  const allocations = value.allocations.map((allocation) => parseAllocation(allocation, groupMode));
+  const expectedSign = Math.sign(totalAmount);
+  if (allocations.some((allocation) => Math.sign(allocation.amount) !== expectedSign)) {
+    throw new ApiError(
+      400,
+      'Every allocation must use the same sign as the entry total.',
+      'invalid_entry',
+    );
+  }
+  const allocationTotal = allocations.reduce((sum, allocation) => sum + allocation.amount, 0);
+  if (allocationTotal !== totalAmount) {
+    throw new ApiError(400, 'Allocations must add up to the entry total exactly.', 'invalid_entry');
+  }
+  const contributorKeys = new Set<string>();
+  for (const allocation of allocations) {
+    if (contributorKeys.has(allocation.contributorKey)) {
+      throw new ApiError(
+        400,
+        'Each participant may appear only once in an entry.',
+        'duplicate_contributor',
+      );
+    }
+    contributorKeys.add(allocation.contributorKey);
+  }
+
+  const note = normalizeNote(value.note);
+  if (totalAmount < 0 && (!note || [...note].length < 4)) {
+    throw new ApiError(
+      400,
+      'Corrections require a reason of at least 4 characters.',
+      'invalid_entry',
+    );
+  }
+  return { totalAmount, allocations, note, idempotencyKey };
 }

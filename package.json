@@ -25,7 +25,8 @@
     "db:migrate:local": "npm run db:migrate:local --workspace @million-beers/api",
     "db:migrate:remote": "npm run db:migrate:remote --workspace @million-beers/api",
     "deploy:api": "npm run deploy --workspace @million-beers/api",
-    "smoke": "node scripts/smoke-test.mjs"
+    "smoke": "node scripts/smoke-test.mjs",
+    "smoke:group:local": "node scripts/group-smoke-test.mjs"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

@@ -55,11 +55,14 @@ async function event(
 beforeEach(async () => {
   await env.DB.batch([
     env.DB.prepare('DELETE FROM beer_events'),
+    env.DB.prepare('DELETE FROM beer_entries'),
     env.DB.prepare('DELETE FROM contributor_totals'),
     env.DB.prepare('DELETE FROM daily_totals'),
     env.DB.prepare('DELETE FROM rate_limits'),
     env.DB.prepare(
-      'UPDATE challenge_state SET total = 0, event_count = 0, updated_at = 0 WHERE id = 1',
+      `UPDATE challenge_state
+       SET total = 0, event_count = 0, entry_count = 0, updated_at = 0
+       WHERE id = 1`,
     ),
   ]);
 });
@@ -148,13 +151,13 @@ describe('event ledger', () => {
     expect(await correction.json()).toMatchObject({ total: 2 });
 
     const state = await env.DB.prepare(
-      'SELECT total, event_count FROM challenge_state WHERE id = 1',
+      'SELECT total, event_count, entry_count FROM challenge_state WHERE id = 1',
     ).first();
     const contributor = await env.DB.prepare(
       'SELECT net_total, event_count FROM contributor_totals',
     ).first();
     const daily = await env.DB.prepare('SELECT net_total, event_count FROM daily_totals').first();
-    expect(state).toEqual({ total: 2, event_count: 2 });
+    expect(state).toEqual({ total: 2, event_count: 2, entry_count: 2 });
     expect(contributor).toEqual({ net_total: 2, event_count: 2 });
     expect(daily).toEqual({ net_total: 2, event_count: 2 });
   });
@@ -170,6 +173,9 @@ describe('event ledger', () => {
     expect(await env.DB.prepare('SELECT count(*) AS count FROM beer_events').first()).toEqual({
       count: 1,
     });
+    expect(await env.DB.prepare('SELECT count(*) AS count FROM beer_entries').first()).toEqual({
+      count: 1,
+    });
   });
 
   it('prevents a correction from taking the total below zero', async () => {
@@ -180,10 +186,9 @@ describe('event ledger', () => {
       idempotencyKey: crypto.randomUUID(),
     });
     expect(response.status).toBe(409);
-    expect(await env.DB.prepare('SELECT total, event_count FROM challenge_state').first()).toEqual({
-      total: 0,
-      event_count: 0,
-    });
+    expect(
+      await env.DB.prepare('SELECT total, event_count, entry_count FROM challenge_state').first(),
+    ).toEqual({ total: 0, event_count: 0, entry_count: 0 });
   });
 
   it('rejects mutation requests from an unapproved browser origin', async () => {
