@@ -15,6 +15,9 @@ The shared code protects against casual unauthorized updates; it is not individu
 - CORS rejects unapproved browser origins, but CORS is not authentication.
 - Rate limits reduce opportunistic brute force. They cannot guarantee protection against a distributed brute-force attack across many IP addresses.
 - The public display escapes contributor names and notes through React's normal rendering path.
+- The shared editor session authorizes every allocation in a group entry. It does not cryptographically identify the person submitting it.
+- Participant names are unverified display labels, not user accounts or identities.
+- Group allocation tracks beer counts only. It does not add payments, debts, reimbursements, or financial-settlement behavior.
 
 ## Secret rotation
 

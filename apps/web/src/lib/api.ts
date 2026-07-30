@@ -1,4 +1,4 @@
-import type { DashboardSummary, EditorSession, EventPayload } from './types';
+import type { DashboardSummary, EditorSession, EntryPayload, EventPayload } from './types';
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/u, '');
 
@@ -65,6 +65,23 @@ export function submitEvent(
   token: string,
 ): Promise<{ total: number; idempotent: boolean }> {
   return requestJson('/api/events', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function submitEntry(
+  payload: EntryPayload,
+  token: string,
+): Promise<{
+  stats: { total: number; entryCount: number; allocationCount: number };
+  idempotent: boolean;
+}> {
+  return requestJson('/api/entries', {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,

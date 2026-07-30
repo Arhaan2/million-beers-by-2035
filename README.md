@@ -26,7 +26,9 @@ The browser never mutates repository files and contains no GitHub token, crew co
 - Live total, visible low-percentage progress, countdown, group pace math, milestones, and projected finish
 - 30-day accessible SVG trend, recent append-only activity, and net contributor leaderboard
 - Keyboard-accessible shared-code login and update modals
-- Positive quick additions, custom amounts, and confirmed negative corrections
+- Positive quick additions, custom amounts, group splits, and confirmed negative corrections
+- Equal or manual integer allocation across 2–25 named participants, with an exact-allocation review
+- One grouped activity card per submission with an accessible per-person allocation disclosure
 - Session tokens kept in `sessionStorage`; optional nickname kept in `localStorage`
 - Polling every 25 seconds while visible with last-known-good data preserved on transient failures
 - Signed 12-hour editor sessions, hashed-IP rate limits, idempotent submissions, and atomic D1 aggregate updates
@@ -85,6 +87,16 @@ npm run build
 
 Worker tests use Cloudflare's current Vitest integration inside the Workers runtime. D1 migrations are applied to isolated test storage before integration tests.
 
+Run the full local group sequence after starting the Worker:
+
+```bash
+npm run dev:api
+# In another terminal:
+npm run smoke:group:local
+```
+
+The sequence records a single-person +3, a four-person +12, an exact idempotent retry, and a four-person -12 correction. It verifies entry and allocation counts and rejects mismatched and duplicate-name payloads.
+
 ## D1 and Worker deployment
 
 The Worker name is `million-beers-api`; the binding is `DB`; the database name is `million-beers-production`.
@@ -127,22 +139,76 @@ Pushes to `main` run `.github/workflows/deploy-pages.yml`. The least-privilege w
 
 `apps/web/.env.production` contains only the public Worker URL. The production CSP in `apps/web/index.html` must list the exact Worker origin in `connect-src`.
 
-## Corrections and idempotency
+## Single-person and group entries
 
-Corrections are separate negative `beer_events`; no edit or delete endpoint exists. Every event carries a browser-generated UUID idempotency key. The unique D1 constraint and transactional batch ensure a timed-out retry returns the original event without incrementing any aggregate twice.
+Single-person mode remains the default and preserves the quick-amount workflow. “Split between people” starts with two participant rows and supports up to 25. “Split equally” uses integer division and assigns remainder beers to the first participants—for example, 10 across 3 becomes 4, 3, 3. Every allocation can be edited manually afterward. Fractional or zero allocations are never accepted.
 
-One batch inserts the immutable event, updates the challenge row, and upserts contributor and daily aggregates. A database check prevents the total from going below zero.
+Group submissions are reviewed before writing. The total must match the allocation sum exactly, and normalized participant names must be unique. Participant names are display labels, not authenticated accounts.
+
+```json
+{
+  "totalAmount": 12,
+  "allocations": [
+    { "contributor": "Arhaan", "amount": 4 },
+    { "contributor": "Sam", "amount": 3 },
+    { "contributor": "Alex", "amount": 3 },
+    { "contributor": "Rohan", "amount": 2 }
+  ],
+  "note": "Friday night hangout",
+  "idempotencyKey": "browser-generated-uuid"
+}
+```
+
+`POST /api/entries` returns one grouped entry, its allocations, aggregate entry/allocation counts, and an `idempotent` flag. Public responses never include normalization keys, idempotency keys, session fingerprints, or rate-limit identifiers. `POST /api/events` remains backward compatible and delegates to the same service with one allocation.
+
+```json
+{
+  "entry": {
+    "id": "server-generated-uuid",
+    "totalAmount": 12,
+    "note": "Friday night hangout",
+    "createdAt": 1785463200000,
+    "localDay": "2026-07-30",
+    "isCorrection": false,
+    "isGroup": true,
+    "allocations": [{ "id": "allocation-uuid", "contributor": "Arhaan", "amount": 4 }]
+  },
+  "stats": {
+    "total": 1234,
+    "remaining": 998766,
+    "entryCount": 100,
+    "allocationCount": 142
+  },
+  "idempotent": false
+}
+```
+
+Corrections are entered as positive absolute values in the browser, confirmed explicitly, and sent as a negative total with negative allocations. A correction reason of at least four characters is required. Corrections remain new append-only entries; no public edit or delete endpoint exists.
+
+## Data model, migration, and idempotency
+
+`beer_entries` stores one immutable parent per user submission. `beer_events` remains the per-person allocation ledger and links each allocation to its parent with `entry_id` and `allocation_index`. Challenge and daily aggregates track both entry count and allocation count; the public “Recorded updates” statistic uses entry count. Leaderboard totals continue to sum per-person allocations, while trend and pace calculations continue to use beer totals.
+
+Migration `0002_group_entries.sql` creates the parent table, backfills one deterministic `legacy-<event-id>` parent for every historical event, links each old event as allocation index 0, and preserves totals, names, notes, and timestamps. Its compatibility trigger safely promotes any old-Worker insert made during the migration-to-deploy window. Never edit an applied migration.
+
+Every entry carries one browser-generated UUID idempotency key. The parent unique constraint and D1 transactional batch ensure a timed-out exact retry returns the original grouped entry without incrementing any aggregate twice. Reusing a key with different payload data returns a conflict. Child allocation idempotency values are generated only by the Worker.
+
+One atomic batch inserts the parent and every allocation, updates the challenge once, updates each contributor independently, and updates the daily aggregate once. Any failed child or aggregate operation rolls back the entire entry. A database check prevents the total from going below zero.
 
 ## Backup and export
 
-Export production D1 before maintenance or schema changes:
+Export production D1 before maintenance or schema changes. Keep the timestamped export outside the repository and confirm it is nonempty:
 
 ```bash
 cd apps/api
-npx wrangler d1 export million-beers-production --remote --output=../../million-beers-backup.sql
+BACKUP_PATH="../../../million-beers-production-$(date +%Y%m%d-%H%M%S).sql"
+npx wrangler d1 export million-beers-production --remote --output="$BACKUP_PATH"
+test -s "$BACKUP_PATH"
 ```
 
 Treat exports as sensitive operational data even though the public API exposes only display fields. Store backups outside the repository.
+
+For this migration, deploy in this order: finish local checks → export D1 → record integrity values → apply the remote migration → verify integrity → deploy the Worker → verify health and grouped summary → merge the frontend → verify GitHub Pages. This prevents the group-aware frontend from reaching an old API.
 
 ## Production smoke test
 
