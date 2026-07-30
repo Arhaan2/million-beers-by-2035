@@ -16,10 +16,10 @@ import {
   projectedTargetFinishAt,
   requiredPerDay,
 } from './lib/calculations';
-import { ApiRequestError, login, submitEvent, validateSession } from './lib/api';
+import { ApiRequestError, login, submitEntry, validateSession } from './lib/api';
 import { formatDecimal, formatInteger } from './lib/format';
 import { clearSession, readSession, storeSession } from './lib/session';
-import type { EditorSession, EventPayload } from './lib/types';
+import type { EditorSession, EntryPayload } from './lib/types';
 
 const REPOSITORY_URL = 'https://github.com/Arhaan2/million-beers-by-2035';
 
@@ -79,20 +79,20 @@ function App() {
     return nextSession;
   };
 
-  const handleSubmit = async (payload: EventPayload): Promise<void> => {
+  const handleSubmit = async (payload: EntryPayload): Promise<void> => {
     if (!session) throw new ApiRequestError('Your editor session has expired.', 401);
     try {
-      await submitEvent(payload, session.token);
+      await submitEntry(payload, session.token);
       await refresh();
       setUpdateOpen(false);
       setToast({
         message:
-          payload.amount > 0
-            ? `Added ${payload.amount} beers to the board.`
-            : `Recorded a correction of ${payload.amount}.`,
+          payload.totalAmount > 0
+            ? `Added ${payload.totalAmount} beers to the board.`
+            : `Recorded a correction of ${payload.totalAmount}.`,
         kind: 'success',
       });
-      if (payload.amount > 0) {
+      if (payload.totalAmount > 0) {
         setCelebrating(true);
         window.setTimeout(() => setCelebrating(false), 1_800);
       }
@@ -208,7 +208,7 @@ function App() {
             </section>
             <TrendChart days={summary.dailyTotals} />
             <div className="content-grid">
-              <ActivityFeed events={summary.recentEvents} timezone={summary.challenge.timezone} />
+              <ActivityFeed entries={summary.recentEntries} timezone={summary.challenge.timezone} />
               <Leaderboard entries={summary.leaderboard} />
             </div>
           </>
@@ -241,7 +241,12 @@ function App() {
         </a>
       </footer>
       <LoginModal open={loginOpen} onClose={() => setLoginOpen(false)} onSubmit={handleLogin} />
-      <UpdateModal open={updateOpen} onClose={() => setUpdateOpen(false)} onSubmit={handleSubmit} />
+      <UpdateModal
+        open={updateOpen}
+        onClose={() => setUpdateOpen(false)}
+        onSubmit={handleSubmit}
+        suggestedContributors={summary?.leaderboard.map((entry) => entry.contributor) ?? []}
+      />
       <Toast message={toast?.message ?? null} kind={toast?.kind ?? 'success'} />
       {celebrating ? (
         <div className="confetti" aria-hidden="true">

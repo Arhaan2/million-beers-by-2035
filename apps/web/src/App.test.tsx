@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
 import { UpdateModal } from './components/UpdateModal';
-import type { DashboardSummary, EventPayload } from './lib/types';
+import type { DashboardSummary, EntryPayload } from './lib/types';
 import { validateUpdate } from './lib/updateValidation';
 
 const summary: DashboardSummary = {
@@ -13,7 +13,16 @@ const summary: DashboardSummary = {
     deadlineAt: '2035-01-01T00:00:00-08:00',
     timezone: 'America/Los_Angeles',
   },
-  stats: { total: 7, remaining: 999_993, eventCount: 1, percentComplete: 0.0007, updatedAt: 1 },
+  stats: {
+    total: 7,
+    remaining: 999_993,
+    eventCount: 1,
+    entryCount: 1,
+    allocationCount: 1,
+    percentComplete: 0.0007,
+    updatedAt: 1,
+  },
+  recentEntries: [],
   recentEvents: [],
   leaderboard: [],
   dailyTotals: Array.from({ length: 30 }, (_, index) => ({
@@ -88,7 +97,7 @@ describe('UpdateModal', () => {
   });
 
   it('requires correction confirmation and submits a negative amount', async () => {
-    const submit = vi.fn<(payload: EventPayload) => Promise<void>>(() => Promise.resolve());
+    const submit = vi.fn<(payload: EntryPayload) => Promise<void>>(() => Promise.resolve());
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
     render(<UpdateModal open onClose={() => undefined} onSubmit={submit} />);
     fireEvent.click(screen.getByLabelText(/Correction mode/u));
@@ -98,6 +107,10 @@ describe('UpdateModal', () => {
     fireEvent.click(screen.getByRole('button', { name: /Review correction/u }));
     await waitFor(() => expect(submit).toHaveBeenCalledOnce());
     expect(confirm).toHaveBeenCalledWith('Record a correction of -1 beers?');
-    expect(submit.mock.calls[0]?.[0]).toMatchObject({ amount: -1, note: 'Duplicate entry' });
+    expect(submit.mock.calls[0]?.[0]).toMatchObject({
+      totalAmount: -1,
+      allocations: [{ amount: -1 }],
+      note: 'Duplicate entry',
+    });
   });
 });
