@@ -24,6 +24,7 @@ The browser never mutates repository files and contains no GitHub token, crew co
 ## Features
 
 - Live total, visible low-percentage progress, countdown, group pace math, milestones, and projected finish
+- Crew Size counts each normalized named recipient once after their first positive allocation; corrections never remove them, and Anonymous is excluded
 - 30-day accessible SVG trend, recent append-only activity, and net contributor leaderboard
 - Keyboard-accessible shared-code login and update modals
 - Positive quick additions, custom amounts, group splits, and confirmed negative corrections

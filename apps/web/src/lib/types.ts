@@ -11,6 +11,7 @@ export interface DashboardStats {
   eventCount: number;
   entryCount: number;
   allocationCount: number;
+  crewSize: number;
   percentComplete: number;
   updatedAt: number;
 }

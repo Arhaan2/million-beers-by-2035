@@ -1,5 +1,5 @@
 import { ApiError } from './responses';
-import { normalizeContributorKey } from './schemas';
+import { ANONYMOUS_CONTRIBUTOR, normalizeContributorKey } from './schemas';
 import type {
   CreateEntryResult,
   EntryInput,
@@ -57,6 +57,15 @@ interface RecentEntryRow {
   allocation_amount: number;
   contributor: string;
   allocation_index: number;
+}
+
+interface CrewSizeRow {
+  crew_size: unknown;
+}
+
+function toNonNegativeInteger(value: unknown): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.trunc(parsed) : 0;
 }
 
 function toPublicEvent(row: EventRow): PublicEvent {
@@ -392,7 +401,7 @@ function groupRecentEntries(rows: RecentEntryRow[]): PublicEntry[] {
 export async function getSummary(env: Env, nowMs = Date.now()): Promise<unknown> {
   const target = Number(env.CHALLENGE_TARGET);
   const days = recentCalendarDays(nowMs, env.CHALLENGE_TIMEZONE);
-  const [state, recentEvents, recentEntryRows, leaderboard, daily] = await Promise.all([
+  const primarySummaryQuery = Promise.all([
     readState(env.DB),
     env.DB.prepare(
       `SELECT id, amount, contributor, note, created_at, local_day
@@ -444,6 +453,18 @@ export async function getSummary(env: Env, nowMs = Date.now()): Promise<unknown>
         entry_count: number;
       }>(),
   ]);
+  const crewSizeQuery = env.DB.prepare(
+    `SELECT COUNT(DISTINCT contributor_key) AS crew_size
+       FROM beer_events
+       WHERE amount > 0
+         AND contributor_key IS NOT NULL
+         AND contributor_key <> ''
+         AND contributor_key <> ?`,
+  )
+    .bind(normalizeContributorKey(ANONYMOUS_CONTRIBUTOR))
+    .first<CrewSizeRow>();
+  const [[state, recentEvents, recentEntryRows, leaderboard, daily], crewSizeRow] =
+    await Promise.all([primarySummaryQuery, crewSizeQuery]);
 
   const total = state.total;
   const dailyMap = new Map(daily.results.map((row) => [row.local_day, row]));
@@ -460,6 +481,7 @@ export async function getSummary(env: Env, nowMs = Date.now()): Promise<unknown>
       eventCount: state.entry_count,
       entryCount: state.entry_count,
       allocationCount: state.event_count,
+      crewSize: toNonNegativeInteger(crewSizeRow?.crew_size),
       percentComplete: target > 0 ? Math.min(100, (total / target) * 100) : 100,
       updatedAt: state.updated_at,
     },
