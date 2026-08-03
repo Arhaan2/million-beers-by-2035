@@ -169,6 +169,22 @@ function App() {
                   }
                 />
                 <StatCard
+                  label="Crew Size"
+                  value={formatInteger(summary.stats.crewSize)}
+                  detail={
+                    summary.stats.crewSize === 0
+                      ? 'No named crew members yet'
+                      : `${formatInteger(summary.stats.crewSize)} distinct ${
+                          summary.stats.crewSize === 1 ? 'person' : 'people'
+                        } recorded`
+                  }
+                />
+                <StatCard
+                  label="Recorded updates"
+                  value={formatInteger(summary.stats.eventCount)}
+                  detail="Append-only entries"
+                />
+                <StatCard
                   label="Group average / elapsed day"
                   value={metrics.average ? formatDecimal(metrics.average, 2) : 'No pace yet'}
                   detail="Historical collective rate"
@@ -193,11 +209,6 @@ function App() {
                   label="Projected finish"
                   value={metrics.projected ?? 'No pace yet'}
                   detail="At the current group pace"
-                />
-                <StatCard
-                  label="Recorded updates"
-                  value={formatInteger(summary.stats.eventCount)}
-                  detail="Append-only entries"
                 />
                 <StatCard
                   label="Next milestone"

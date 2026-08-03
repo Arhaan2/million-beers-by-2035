@@ -3,6 +3,7 @@ import type { AllocationInput, EntryInput, EventInput } from './types';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const MAX_BODY_BYTES = 16 * 1024;
+export const ANONYMOUS_CONTRIBUTOR = 'Anonymous';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -42,14 +43,14 @@ export function parseLoginBody(value: unknown): string {
 
 function normalizeContributor(value: unknown, allowAnonymous = true): string {
   if (value === undefined || value === null || value === '') {
-    if (allowAnonymous) return 'Anonymous';
+    if (allowAnonymous) return ANONYMOUS_CONTRIBUTOR;
     throw new ApiError(400, 'Every group participant needs a name.', 'invalid_entry');
   }
   if (typeof value !== 'string')
     throw new ApiError(400, 'Contributor must be text.', 'invalid_event');
   const normalized = value.trim().replace(/\s+/gu, ' ');
   if (!normalized) {
-    if (allowAnonymous) return 'Anonymous';
+    if (allowAnonymous) return ANONYMOUS_CONTRIBUTOR;
     throw new ApiError(400, 'Every group participant needs a name.', 'invalid_entry');
   }
   if ([...normalized].length > 30) {
