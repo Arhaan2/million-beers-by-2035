@@ -1,5 +1,5 @@
 import { ApiError } from './responses';
-import type { AllocationInput, EntryInput, EventInput } from './types';
+import type { AllocationInput, EntryInput, EventInput, MemoryInput } from './types';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const MAX_BODY_BYTES = 16 * 1024;
@@ -41,7 +41,7 @@ export function parseLoginBody(value: unknown): string {
   return value.code;
 }
 
-function normalizeContributor(value: unknown, allowAnonymous = true): string {
+export function normalizeContributor(value: unknown, allowAnonymous = true): string {
   if (value === undefined || value === null || value === '') {
     if (allowAnonymous) return ANONYMOUS_CONTRIBUTOR;
     throw new ApiError(400, 'Every group participant needs a name.', 'invalid_entry');
@@ -55,6 +55,13 @@ function normalizeContributor(value: unknown, allowAnonymous = true): string {
   }
   if ([...normalized].length > 30) {
     throw new ApiError(400, 'Contributor must be 30 characters or fewer.', 'invalid_event');
+  }
+  if ([...normalizeContributorKey(normalized)].length > 30) {
+    throw new ApiError(
+      400,
+      'Contributor must normalize to 30 characters or fewer.',
+      'invalid_event',
+    );
   }
   return normalized;
 }
@@ -113,7 +120,12 @@ function parseAllocation(value: unknown, groupMode: boolean): AllocationInput {
       'invalid_entry',
     );
   }
-  const contributor = normalizeContributor(value.contributor, !groupMode);
+  const memberId = optionalId(value.memberId);
+  const sourceAllocationId = optionalId(value.sourceAllocationId);
+  const contributor = normalizeContributor(
+    value.contributor,
+    !groupMode || Boolean(memberId || sourceAllocationId),
+  );
   const amount = value.amount;
   if (
     typeof amount !== 'number' ||
@@ -128,7 +140,13 @@ function parseAllocation(value: unknown, groupMode: boolean): AllocationInput {
       'invalid_entry',
     );
   }
-  return { contributor, contributorKey: normalizeContributorKey(contributor), amount };
+  return {
+    contributor,
+    contributorKey: normalizeContributorKey(contributor),
+    amount,
+    ...(memberId ? { memberId } : {}),
+    ...(sourceAllocationId ? { sourceAllocationId } : {}),
+  };
 }
 
 export function parseEntryBody(value: unknown): EntryInput {
@@ -173,6 +191,7 @@ export function parseEntryBody(value: unknown): EntryInput {
   }
   const contributorKeys = new Set<string>();
   for (const allocation of allocations) {
+    if (allocation.memberId || allocation.sourceAllocationId) continue;
     if (contributorKeys.has(allocation.contributorKey)) {
       throw new ApiError(
         400,
@@ -191,5 +210,190 @@ export function parseEntryBody(value: unknown): EntryInput {
       'invalid_entry',
     );
   }
-  return { totalAmount, allocations, note, idempotencyKey };
+  const correctionOfEntryId = optionalId(value.correctionOfEntryId);
+  if (correctionOfEntryId && (totalAmount > 0 || allocations.some((a) => !a.sourceAllocationId))) {
+    throw new ApiError(
+      400,
+      'Linked corrections require negative allocations and their original allocation IDs.',
+      'invalid_correction',
+    );
+  }
+  if (!correctionOfEntryId && allocations.some((a) => a.sourceAllocationId)) {
+    throw new ApiError(400, 'A correction source entry is required.', 'invalid_correction');
+  }
+  return {
+    totalAmount,
+    allocations,
+    note,
+    idempotencyKey,
+    ...parseOccurrence(value),
+    memory: parseMemory(value.memory),
+    correctionOfEntryId,
+  };
+}
+
+function optionalId(value: unknown): string | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string' || !/^[a-zA-Z0-9-]{1,256}$/u.test(value)) {
+    throw new ApiError(400, 'Invalid record identifier.', 'invalid_identifier');
+  }
+  return value;
+}
+
+export function parseMemory(value: unknown): MemoryInput | null {
+  if (value === undefined || value === null) return null;
+  if (!isRecord(value)) throw new ApiError(400, 'Memory must be an object.', 'invalid_memory');
+  const allowed = new Set(['title', 'shortNote', 'venue', 'city', 'beer', 'brewery', 'visibility']);
+  if (Object.keys(value).some((key) => !allowed.has(key))) {
+    throw new ApiError(400, 'Unknown memory field.', 'invalid_memory');
+  }
+  const field = (key: string, maximum = 80): string | null => {
+    const input = value[key];
+    if (input === undefined || input === null || input === '') return null;
+    if (
+      typeof input !== 'string' ||
+      [...input.trim()].length > maximum ||
+      [...input].some((character) => {
+        const code = character.codePointAt(0) ?? 0;
+        return code < 32 && code !== 9 && code !== 10 && code !== 13;
+      })
+    ) {
+      throw new ApiError(
+        400,
+        `${key} must be text of ${maximum} characters or fewer.`,
+        'invalid_memory',
+      );
+    }
+    return input.trim() || null;
+  };
+  if (
+    value.visibility !== undefined &&
+    value.visibility !== 'public' &&
+    value.visibility !== 'private'
+  ) {
+    throw new ApiError(400, 'Memory visibility must be public or private.', 'invalid_memory');
+  }
+  return {
+    title: field('title'),
+    shortNote: field('shortNote', 140),
+    venue: field('venue'),
+    city: field('city'),
+    beer: field('beer'),
+    brewery: field('brewery'),
+    visibility: value.visibility === 'private' ? 'private' : 'public',
+  };
+}
+
+function parseOccurrence(
+  value: Record<string, unknown>,
+): Pick<EntryInput, 'occurredAt' | 'occurrenceTimezone' | 'occurrencePrecision'> {
+  if (value.occurredAt === undefined || value.occurredAt === null || value.occurredAt === '') {
+    if (value.occurrenceTimezone || value.occurrencePrecision)
+      throw new ApiError(400, 'An occurrence date is required.', 'invalid_occurrence');
+    return { occurredAt: null, occurrenceTimezone: null, occurrencePrecision: null };
+  }
+  const date = value.occurredAt;
+  const zone = value.occurrenceTimezone;
+  const precision = value.occurrencePrecision ?? 'minute';
+  const match =
+    typeof date === 'string'
+      ? /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{3}))?)?(Z|[+-]\d{2}:\d{2})$/u.exec(
+          date,
+        )
+      : null;
+  if (
+    typeof date !== 'string' ||
+    !match ||
+    typeof zone !== 'string' ||
+    zone.length > 80 ||
+    (precision !== 'day' && precision !== 'minute')
+  ) {
+    throw new ApiError(
+      400,
+      'Occurrence needs an ISO date with an explicit offset, IANA timezone, and day or minute precision.',
+      'invalid_occurrence',
+    );
+  }
+  const timestamp = Date.parse(date);
+  const [year, month, day, hour, minute, second] = match.slice(1, 7).map((n) => Number(n ?? 0));
+  const calendar = new Date(Date.UTC(year ?? 0, (month ?? 0) - 1, day, hour, minute, second));
+  if (
+    !Number.isFinite(timestamp) ||
+    calendar.getUTCFullYear() !== year ||
+    calendar.getUTCMonth() + 1 !== month ||
+    calendar.getUTCDate() !== day ||
+    (hour ?? 99) > 23 ||
+    (minute ?? 99) > 59 ||
+    (second ?? 99) > 59 ||
+    timestamp < Date.UTC(2000, 0, 1) ||
+    timestamp > Date.now() + 300_000
+  ) {
+    throw new ApiError(
+      400,
+      'Occurrence must be a valid date from 2000 through now.',
+      'invalid_occurrence',
+    );
+  }
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: zone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hourCycle: 'h23',
+    }).formatToParts(timestamp);
+    const local = (key: Intl.DateTimeFormatPartTypes): number =>
+      Number(parts.find((p) => p.type === key)?.value);
+    if (
+      local('year') !== year ||
+      local('month') !== month ||
+      local('day') !== day ||
+      local('hour') !== hour ||
+      local('minute') !== minute ||
+      local('second') !== second ||
+      (precision === 'day' && (hour !== 0 || minute !== 0 || second !== 0))
+    )
+      throw new Error('offset mismatch');
+  } catch {
+    throw new ApiError(
+      400,
+      'Occurrence offset must match its timezone; nonexistent local times are not accepted.',
+      'invalid_occurrence',
+    );
+  }
+  return {
+    occurredAt: new Date(timestamp).toISOString(),
+    occurrenceTimezone: zone,
+    occurrencePrecision: precision,
+  };
+}
+
+export function canonicalEntryPayload(input: EntryInput): string {
+  return JSON.stringify({
+    totalAmount: input.totalAmount,
+    note: input.note,
+    allocations: input.allocations.map((a) => ({
+      contributorKey: a.contributorKey,
+      amount: a.amount,
+      memberId: a.memberId ?? null,
+      sourceAllocationId: a.sourceAllocationId ?? null,
+    })),
+    occurredAt: input.occurredAt ?? null,
+    occurrenceTimezone: input.occurrenceTimezone ?? null,
+    occurrencePrecision: input.occurrencePrecision ?? null,
+    memory: input.memory ?? null,
+    correctionOfEntryId: input.correctionOfEntryId ?? null,
+  });
+}
+
+export function hasExtendedInput(input: EntryInput): boolean {
+  return Boolean(
+    input.occurredAt ||
+    input.memory ||
+    input.correctionOfEntryId ||
+    input.allocations.some((a) => a.memberId || a.sourceAllocationId),
+  );
 }

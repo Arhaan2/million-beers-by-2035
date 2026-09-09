@@ -17,6 +17,18 @@ export interface AllocationInput {
   contributor: string;
   contributorKey: string;
   amount: number;
+  memberId?: string;
+  sourceAllocationId?: string;
+}
+
+export interface MemoryInput {
+  title: string | null;
+  shortNote: string | null;
+  venue: string | null;
+  city: string | null;
+  beer: string | null;
+  brewery: string | null;
+  visibility: 'public' | 'private';
 }
 
 export interface EntryInput {
@@ -24,6 +36,11 @@ export interface EntryInput {
   allocations: AllocationInput[];
   note: string | null;
   idempotencyKey: string;
+  occurredAt?: string | null;
+  occurrenceTimezone?: string | null;
+  occurrencePrecision?: 'day' | 'minute' | null;
+  memory?: MemoryInput | null;
+  correctionOfEntryId?: string | null;
 }
 
 export interface PublicEvent {
@@ -39,6 +56,9 @@ export interface PublicAllocation {
   id: string;
   contributor: string;
   amount: number;
+  memberId?: string | null;
+  remainingCorrectable?: number;
+  sourceAllocationId?: string | null;
 }
 
 export interface PublicEntry {
@@ -50,6 +70,15 @@ export interface PublicEntry {
   isCorrection: boolean;
   isGroup: boolean;
   allocations: PublicAllocation[];
+  occurredAt?: string | null;
+  occurrenceTimezone?: string | null;
+  occurrencePrecision?: 'day' | 'minute' | null;
+  occurrenceSource?: 'provided' | 'unknown';
+  memory?: MemoryInput | null;
+  metadataVersion?: number;
+  correctionOfEntryId?: string | null;
+  correctionKind?: 'linked' | 'legacy' | null;
+  isSystem?: boolean;
 }
 
 export interface EntryStats {
@@ -57,12 +86,14 @@ export interface EntryStats {
   remaining: number;
   entryCount: number;
   allocationCount: number;
+  revision?: number;
 }
 
 export interface CreateEntryResult {
   entry: PublicEntry;
   stats: EntryStats;
   idempotent: boolean;
+  revision?: number;
 }
 
 export interface RecordEventResult {
@@ -70,6 +101,7 @@ export interface RecordEventResult {
   entry: PublicEntry;
   total: number;
   idempotent: boolean;
+  revision?: number;
 }
 
 export interface RequestContext {

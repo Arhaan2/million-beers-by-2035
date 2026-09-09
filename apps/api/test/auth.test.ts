@@ -18,7 +18,12 @@ describe('session authentication', () => {
   it('rejects expired and modified tokens', async () => {
     const created = await createSessionToken(secret, 10, 1_000);
     expect(await verifySessionToken(created.token, secret, 1_010)).toBeNull();
-    expect(await verifySessionToken(`${created.token.slice(0, -1)}x`, secret, 1_001)).toBeNull();
+    const [payload, signature] = created.token.split('.');
+    if (!signature) throw new Error('Signed token fixture is missing its signature');
+    // Changing the last base64 character can alter padding bits only (or leave
+    // it unchanged). Change the first sextet to guarantee different MAC bytes.
+    const modifiedSignature = `${signature[0] === 'A' ? 'B' : 'A'}${signature.slice(1)}`;
+    expect(await verifySessionToken(`${payload}.${modifiedSignature}`, secret, 1_001)).toBeNull();
   });
 
   it('uses a timing-safe byte comparison helper', () => {

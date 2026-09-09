@@ -5,6 +5,9 @@
   "compatibility_date": "2026-07-24",
   "workers_dev": true,
   "preview_urls": false,
+  "version_metadata": {
+    "binding": "VERSION_METADATA",
+  },
   "observability": {
     "enabled": true,
     "head_sampling_rate": 1,

@@ -1,6 +1,17 @@
 import { compareCrewCode, createSessionToken, requireEditorSession, stableHash } from './auth';
 import { assertAllowedBrowserOrigin, getAllowedOrigin, optionsResponse } from './cors';
 import { createBeerEntry, getSummary, recordEvent } from './database';
+import {
+  createMember,
+  editMemory,
+  entryDetails,
+  history,
+  memberDetails,
+  members,
+  onThisDate,
+  readiness,
+  recaps,
+} from './crew';
 import { cleanExpiredRateLimits, clearRateLimit, consumeRateLimit } from './rateLimit';
 import { ApiError, errorResponse, jsonResponse } from './responses';
 import { parseEntryBody, parseEventBody, parseLoginBody, readJsonBody } from './schemas';
@@ -94,12 +105,79 @@ async function route(
   context: RequestContext,
 ): Promise<Response> {
   const { pathname } = new URL(request.url);
+  const url = new URL(request.url);
   if (request.method === 'OPTIONS') return optionsResponse(request, env, context);
   if (request.method === 'GET' && pathname === '/health') {
     return jsonResponse({ ok: true, service: 'million-beers-api' }, context);
   }
   if (request.method === 'GET' && pathname === '/api/summary') {
-    return jsonResponse(await getSummary(env), context, { cacheControl: 'public, max-age=10' });
+    return jsonResponse(await getSummary(env), context);
+  }
+  if (request.method === 'GET' && pathname === '/ready') {
+    const result = await readiness(env);
+    return jsonResponse(result, context, { status: result.ok ? 200 : 503 });
+  }
+  if (request.method === 'GET' && pathname === '/api/members')
+    return jsonResponse(
+      await members(env.DB.withSession('first-primary'), url.searchParams),
+      context,
+    );
+  if (request.method === 'POST' && pathname === '/api/members') {
+    const actor = await authorizeMutation(request, env);
+    return jsonResponse(
+      await createMember(env.DB.withSession('first-primary'), await readJsonBody(request), actor),
+      context,
+      { status: 201 },
+    );
+  }
+  if (request.method === 'GET' && pathname === '/api/entries')
+    return jsonResponse(
+      await history(env.DB.withSession('first-primary'), url.searchParams),
+      context,
+    );
+  if (request.method === 'GET' && pathname === '/api/recaps')
+    return jsonResponse(
+      await recaps(
+        env.DB.withSession('first-primary'),
+        url.searchParams,
+        new Date(),
+        env.CHALLENGE_TIMEZONE,
+      ),
+      context,
+    );
+  const memberPath = /^\/api\/members\/([a-zA-Z0-9-]{1,256})$/u.exec(pathname);
+  if (request.method === 'GET' && pathname === '/api/memories/on-this-date')
+    return jsonResponse(
+      await onThisDate(
+        env.DB.withSession('first-primary'),
+        url.searchParams,
+        env.CHALLENGE_TIMEZONE,
+      ),
+      context,
+    );
+  if (request.method === 'GET' && memberPath?.[1])
+    return jsonResponse(
+      await memberDetails(env.DB.withSession('first-primary'), memberPath[1], url.searchParams),
+      context,
+    );
+  const entryPath = /^\/api\/entries\/([a-zA-Z0-9-]{1,256})$/u.exec(pathname);
+  if (request.method === 'GET' && entryPath?.[1])
+    return jsonResponse(
+      await entryDetails(env.DB.withSession('first-primary'), entryPath[1]),
+      context,
+    );
+  const memoryPath = /^\/api\/entries\/([a-zA-Z0-9-]{1,256})\/memory$/u.exec(pathname);
+  if (request.method === 'PUT' && memoryPath?.[1]) {
+    const actor = await authorizeMutation(request, env);
+    return jsonResponse(
+      await editMemory(
+        env.DB.withSession('first-primary'),
+        memoryPath[1],
+        await readJsonBody(request),
+        actor,
+      ),
+      context,
+    );
   }
   if (request.method === 'POST' && pathname === '/api/login') {
     return handleLogin(request, env, executionContext, context);

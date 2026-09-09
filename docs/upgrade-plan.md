@@ -41,3 +41,10 @@ This is an additive upgrade of the existing Million Beer Project. Production dat
 ## Checkpoints
 
 Each coherent phase is committed on the feature branch. Final release evidence records test commands/results, browser engine limitations, compatibility, enabled capabilities, commit/PR/CI/release links, and unresolved gates. Documentation does not substitute for database evidence.
+
+### Backend/data checkpoint
+
+- Candidate additive migrations 0003 (crew/revision/metadata/corrections) and 0004 (atomic owner audit operations) pass isolated tests; numbering remains subject to remote verification. Applied source migrations 0001/0002 are unchanged.
+- Actual Workers/D1 runtime: 70/70 API tests passed, including concurrency, legacy bridges, failed migration rollback/resumption, pagination, privacy, and capability-off rollback after new writes.
+- Synthetic Python integrity/operator suite: 17/17 passed. No production SQL export exists: backup/restore and checkpoint preservation of live IDs remain blocked by Cloudflare authorization.
+- No historical operational entries classified: exact production-ID evidence has not been verified. New community counts currently exclude only explicitly classified records.

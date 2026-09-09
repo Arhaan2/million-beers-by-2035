@@ -51,7 +51,11 @@ export function jsonResponse(
 }
 
 export function errorResponse(error: ApiError, context: RequestContext): Response {
-  return jsonResponse({ error: error.publicMessage, requestId: context.requestId }, context, {
-    status: error.status,
-  });
+  return jsonResponse(
+    { error: error.publicMessage, code: error.category, requestId: context.requestId },
+    context,
+    {
+      status: error.status,
+    },
+  );
 }
