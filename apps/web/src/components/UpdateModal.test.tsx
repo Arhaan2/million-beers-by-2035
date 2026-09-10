@@ -141,7 +141,8 @@ describe('UpdateModal group mode', () => {
     await user.click(screen.getByRole('button', { name: 'Confirm entry' }));
     expect(await screen.findByText('The request timed out.')).toBeInTheDocument();
     expect(screen.getByText('Record 2 beers across 2 people?')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Confirm entry' }));
+    expect(screen.queryByRole('button', { name: 'Back to edit' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Retry saved attempt' }));
     await waitFor(() => expect(submit).toHaveBeenCalledTimes(2));
     expect(submit.mock.calls[0]?.[0].idempotencyKey).toBe(submit.mock.calls[1]?.[0].idempotencyKey);
   });

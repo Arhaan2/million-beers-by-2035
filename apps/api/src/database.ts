@@ -438,6 +438,10 @@ export async function getSummary(env: Env, nowMs = Date.now()): Promise<unknown>
       (SELECT entry_count FROM challenge_state WHERE id = 1) - (SELECT COUNT(*) FROM entry_classification WHERE is_system = 1) AS entryCount`,
       )
       .bind(nowMs - 30 * 86_400_000),
+    publicEntriesStatement(
+      database,
+      'NOT EXISTS (SELECT 1 FROM entry_classification c WHERE c.entry_id = e.id AND c.is_system = 1)',
+    ),
   ]);
   const state = results[0]?.results[0] as
     (StateRow & { mutations_enabled: number; schema_version: number }) | undefined;
@@ -478,6 +482,7 @@ export async function getSummary(env: Env, nowMs = Date.now()): Promise<unknown>
       },
     },
     recentEntries: entries,
+    recentCommunityEntries: groupPublicEntries((results[7]?.results ?? []) as PublicEntryRow[]),
     recentEvents: ((results[2]?.results ?? []) as EventRow[]).map((row) => ({
       id: row.id,
       amount: row.amount,

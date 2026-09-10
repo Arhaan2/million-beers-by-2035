@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { formatTimestamp, relativeTime } from '../lib/format';
 import type { BeerEntry } from '../lib/types';
 import { EmptyState } from './EmptyState';
@@ -7,8 +7,17 @@ function signedAmount(amount: number): string {
   return `${amount > 0 ? '+' : '−'}${Math.abs(amount)}`;
 }
 
-export function ActivityFeed({ entries, timezone }: { entries: BeerEntry[]; timezone: string }) {
+export function ActivityFeed({
+  entries,
+  timezone,
+  title = 'Recent activity',
+}: {
+  entries: BeerEntry[];
+  timezone: string;
+  title?: string;
+}) {
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const feedId = useId();
 
   const toggleEntry = (entryId: string) => {
     setExpanded((current) => {
@@ -20,11 +29,11 @@ export function ActivityFeed({ entries, timezone }: { entries: BeerEntry[]; time
   };
 
   return (
-    <section className="panel" aria-labelledby="activity-heading">
+    <section className="panel" aria-labelledby={`${feedId}-heading`}>
       <div className="panel__heading">
         <div>
           <p className="eyebrow">The ledger</p>
-          <h2 id="activity-heading">Recent activity</h2>
+          <h2 id={`${feedId}-heading`}>{title}</h2>
         </div>
         <span>{entries.length} shown</span>
       </div>
@@ -37,7 +46,7 @@ export function ActivityFeed({ entries, timezone }: { entries: BeerEntry[]; time
         <ol className="activity-list">
           {entries.map((entry) => {
             const isExpanded = expanded.has(entry.id);
-            const allocationId = `allocations-${entry.id}`;
+            const allocationId = `${feedId}-allocations-${entry.id}`;
             const singleAllocation = entry.allocations[0];
             return (
               <li key={entry.id} className={entry.isGroup ? 'activity-entry--group' : ''}>
@@ -49,12 +58,31 @@ export function ActivityFeed({ entries, timezone }: { entries: BeerEntry[]; time
                 </span>
                 <div className="activity-entry__body">
                   <strong>
-                    {entry.isGroup
-                      ? `${entry.allocations.length} people`
-                      : (singleAllocation?.contributor ?? 'Anonymous')}
+                    {entry.memory?.title ??
+                      (entry.isGroup
+                        ? `${entry.allocations.length} people`
+                        : (singleAllocation?.contributor ?? 'Anonymous'))}
                   </strong>
-                  {entry.isCorrection ? <span className="correction-label">Correction</span> : null}
+                  {entry.isCorrection ? (
+                    <span className="correction-label">
+                      {entry.correctionKind === 'linked'
+                        ? 'Linked correction'
+                        : 'Legacy adjustment'}
+                    </span>
+                  ) : null}
+                  {entry.isSystem ? (
+                    <span className="correction-label">Operational record</span>
+                  ) : null}
                   {entry.note ? <p>{entry.note}</p> : null}
+                  {entry.memory?.venue ? (
+                    <p>
+                      {entry.memory.venue}
+                      {entry.memory.city ? ` · ${entry.memory.city}` : ''}
+                    </p>
+                  ) : null}
+                  <a className="entry-detail-link" href={`#/entry/${encodeURIComponent(entry.id)}`}>
+                    View record <span aria-hidden="true">↗</span>
+                  </a>
                   {entry.isGroup ? (
                     <>
                       <button

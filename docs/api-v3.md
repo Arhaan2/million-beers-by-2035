@@ -16,7 +16,7 @@ Migrations start `mutations_enabled = 0`. Directory/history/public memories can 
 
 `GET /health` remains process liveness. `GET /ready` returns 200 only when the database state, schema and required core/operator triggers are available, otherwise 503. It returns non-secret `release` (Worker version metadata tag, falling back to version ID; local builds identify themselves as local), `schemaVersion`, `revision` and `capabilities`.
 
-Summary has additive top-level `revision`, `capabilities` and `community`. Mutation statistics include `revision`. Read capabilities are `crew`, `history`, `memories`; gated write capabilities are `enhancedLogging`, `memberCreation`, `occurrence`, `linkedCorrections`, `metadataEditing`. `photos` and `strongIdentity` are false. A true read capability does not authorize its associated mutation.
+Summary has additive top-level `revision`, `capabilities`, `community` and `recentCommunityEntries`. The latter contains the latest 25 submissions after operational-record exclusion; legacy `recentEntries` retains its raw ordering and definitions. Mutation statistics include `revision`. Read capabilities are `crew`, `history`, `memories`; gated write capabilities are `enhancedLogging`, `memberCreation`, `occurrence`, `linkedCorrections`, `metadataEditing`. `photos` and `strongIdentity` are false. A true read capability does not authorize its associated mutation.
 
 ## Additive entry contract
 
@@ -86,3 +86,7 @@ New `community.directorySize` counts public directory records; `namedContributor
 The pre-upgrade Worker is **not a safe rollback** once private metadata or member privacy exists: it ignores redaction side tables. Use the tested privacy-aware compatible Worker with enhanced mutations disabled, and preserve the additive schema and all new records. The old frontend remains compatible with that Worker. Never restore an older database snapshot automatically.
 
 Photos are not implemented or enabled: no confirmed secure object-storage binding or processing pipeline is configured. Stronger individual authentication and revocable editor invitations remain follow-on work. Historical milestone crossing dates are not inferred from incomplete write-order evidence.
+
+## Recorded-day milestone history
+
+`GET /api/milestones` returns `dateBasis: recorded-day-close`, a limitation label, and bounded `{amount, recordedDay, closingTotal}` milestones from cumulative `daily_totals`. It uses the first completed recorded day ending at or above each existing threshold. Today is excluded; intraday crossing instants remain unknown. This reads the existing recorded-day aggregate and never changes quantity or occurrence data.

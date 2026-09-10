@@ -44,7 +44,7 @@ export function DashboardHeader({
         {loggedIn ? (
           <div className="button-row">
             <button className="button button--primary" onClick={onAdd}>
-              Add beers
+              Record entry
             </button>
             <button className="button button--quiet" onClick={onLogout}>
               Log out

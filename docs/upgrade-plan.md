@@ -48,3 +48,11 @@ Each coherent phase is committed on the feature branch. Final release evidence r
 - Actual Workers/D1 runtime: 70/70 API tests passed, including concurrency, legacy bridges, failed migration rollback/resumption, pagination, privacy, and capability-off rollback after new writes.
 - Synthetic Python integrity/operator suite: 17/17 passed. No production SQL export exists: backup/restore and checkpoint preservation of live IDs remain blocked by Cloudflare authorization.
 - No historical operational entries classified: exact production-ID evidence has not been verified. New community counts currently exclude only explicitly classified records.
+
+### Frontend/reliability checkpoint
+
+- Formatting, lint, and typecheck passed for the complete candidate. Frontend: 77/77 tests; API: 74/74 actual Worker/D1 tests; Python: 17/17. Both builds passed.
+- Independent review found and resolved a cross-tab autosave/discard race; every shared-draft mutation now joins the submission lock and confirmed completion clears only its exact key. No new submission is dispatched without durable shared storage and a safe lock. Exact unresolved retries retain their original payload.
+- Desktop/mobile dashboard rendered in Chromium, Firefox, and WebKit. Chromium/Firefox console clean; WebKit console clean before screenshots, with a reproduced screenshot-tool stylesheet CSP message after capture only. Production CSP was not weakened.
+- Preserved original frontend renders the synthetic new API and successfully logs a synthetic +1 through its original shared-code form; totals and parent count increase once.
+- Shareable before/after screenshots in `docs/qa` contain synthetic local data only. Live before evidence remains outside Git. Full scripted browser write/retry/route checks are the next gate.

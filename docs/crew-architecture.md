@@ -22,6 +22,8 @@ New entry attempts store their canonical original payload independently of mutab
 | `GET /api/entries`               | Recorded history with `memberId`, `from`, `to`, `dateBasis`, `q`, `venue`, `brewery`, `community`, `cursor`, `limit`. |
 | `GET /api/entries/:id`           | Source entry, ordered allocations, correction linkage, and remaining linked-correction allowance.                     |
 | `PUT /api/entries/:id/memory`    | Shared-editor public memory text update with `expectedVersion`; changes metadata without recording quantity.          |
+| `GET /api/milestones`            | Completed recorded-day milestone closes; no intraday crossing claim.                                                  |
+| `GET /api/memories/on-this-date` | Known supplied occurrence dates only, excluding private/system records.                                               |
 | `GET /api/recaps?period=YYYY-MM` | Recorded-month recap and contributing history; `YYYY` selects a year.                                                 |
 
 History cursors order by immutable recording time and ID, so equal timestamps have a deterministic tie-breaker. Occurrence filters use a separate stored local occurrence day; unknown occurrence dates are not invented. Search uses parameterized, bounded values and escapes SQL wildcard characters. Summary retains only a bounded recent window; full history is fetched separately.
@@ -38,7 +40,7 @@ Linked corrections are new negative ledger entries. Each allocation names its `s
 - **Named contributors:** public mapped members with a positive community allocation.
 - **Active participants:** those named contributors with community recording activity in the previous 30 days.
 - **Community entries:** submissions excluding operator-verified system records; not independently verified gatherings.
-- **Recaps:** recorded-calendar quantities and participation with links to source records, excluding verified system records. Historical recorded dates do not prove when a gathering happened.
+- **Recaps:** recorded-calendar quantities and participation with links to source records, excluding verified system records. Historical recorded dates do not prove when a gathering happened. Milestone history uses only completed recorded-day cumulative closes, not an invented intraday sequence.
 
 Classification requires exact entry IDs plus verified evidence through the owner operator, never a contributor-name heuristic. No production records have been classified unless release evidence explicitly says so. Exclusion changes only the new community projection, not the total or raw ledger.
 

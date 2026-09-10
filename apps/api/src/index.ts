@@ -1,6 +1,7 @@
 import { compareCrewCode, createSessionToken, requireEditorSession, stableHash } from './auth';
 import { assertAllowedBrowserOrigin, getAllowedOrigin, optionsResponse } from './cors';
 import { createBeerEntry, getSummary, recordEvent } from './database';
+import { recordedMilestones } from './milestones';
 import {
   createMember,
   editMemory,
@@ -116,6 +117,12 @@ async function route(
   if (request.method === 'GET' && pathname === '/ready') {
     const result = await readiness(env);
     return jsonResponse(result, context, { status: result.ok ? 200 : 503 });
+  }
+  if (request.method === 'GET' && pathname === '/api/milestones') {
+    return jsonResponse(
+      await recordedMilestones(env.DB.withSession('first-primary'), env),
+      context,
+    );
   }
   if (request.method === 'GET' && pathname === '/api/members')
     return jsonResponse(

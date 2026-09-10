@@ -16,10 +16,10 @@ export function TrendChart({ days }: { days: DailyTotal[] }) {
     <section className="panel panel--trend" aria-labelledby="trend-heading">
       <div className="panel__heading">
         <div>
-          <p className="eyebrow">Last 30 local days</p>
-          <h2 id="trend-heading">Activity signal</h2>
+          <p className="eyebrow">Recorded on · last 30 local days</p>
+          <h2 id="trend-heading">The recorded trend</h2>
         </div>
-        <span>{active} active days</span>
+        <span>{active} days with records</span>
       </div>
       <div className="chart-wrap">
         <svg
@@ -30,7 +30,7 @@ export function TrendChart({ days }: { days: DailyTotal[] }) {
         >
           <title id="chart-title">Net beer activity over the last 30 days</title>
           <desc id="chart-desc">
-            {active} active days with a net change of {net} beers.
+            {active} days with records with a net change of {net} beers.
           </desc>
           <line x1="0" y1={baseline} x2={width} y2={baseline} className="chart-baseline" />
           <polyline points={points || `0,${baseline}`} className="chart-line" />
