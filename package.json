@@ -22,6 +22,8 @@
     "test": "npm run test:web && npm run test:api",
     "test:web": "npm run test --workspace @million-beers/web",
     "test:api": "npm run test --workspace @million-beers/api",
+    "test:browser": "node scripts/browser-test.mjs",
+    "test:release": "node --test scripts/release-gate.test.mjs",
     "db:migrate:local": "npm run db:migrate:local --workspace @million-beers/api",
     "db:migrate:remote": "npm run db:migrate:remote --workspace @million-beers/api",
     "deploy:api": "npm run deploy --workspace @million-beers/api",
@@ -36,6 +38,7 @@
     "eslint-plugin-react-hooks": "7.1.1",
     "eslint-plugin-react-refresh": "0.5.3",
     "globals": "17.7.0",
+    "playwright": "1.63.0",
     "prettier": "3.9.6",
     "typescript": "6.0.3",
     "typescript-eslint": "8.65.0"

@@ -85,7 +85,7 @@ New `community.directorySize` counts public directory records; `namedContributor
 
 The pre-upgrade Worker is **not a safe rollback** once private metadata or member privacy exists: it ignores redaction side tables. Use the tested privacy-aware compatible Worker with enhanced mutations disabled, and preserve the additive schema and all new records. The old frontend remains compatible with that Worker. Never restore an older database snapshot automatically.
 
-Photos are not implemented or enabled: no confirmed secure object-storage binding or processing pipeline is configured. Stronger individual authentication and revocable editor invitations remain follow-on work. Historical milestone crossing dates are not inferred from incomplete write-order evidence.
+Photos are not implemented or enabled: no confirmed secure object-storage binding or processing pipeline is configured. Stronger individual authentication and revocable editor invitations remain follow-on work. Exact historical intraday milestone crossing instants are not inferred from incomplete write-order evidence; the endpoint below reports completed recorded-day closes only.
 
 ## Recorded-day milestone history
 

@@ -2,6 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 
 const apiBaseUrl = process.env.API_BASE_URL?.replace(/\/$/u, '');
+if (!apiBaseUrl || !['localhost', '127.0.0.1', '[::1]'].includes(new URL(apiBaseUrl).hostname)) {
+  throw new Error('Synthetic mutation checks are restricted to isolated localhost data.');
+}
 const origin = process.env.ORIGIN;
 let crewCode = process.env.BEER_ADMIN_PIN;
 
@@ -46,7 +49,7 @@ const authorizationHeaders = { ...headers, Authorization: `Bearer ${token}` };
 const positiveKey = randomUUID();
 const positivePayload = {
   amount: 1,
-  contributor: 'Production Smoke Test',
+  contributor: 'Local Smoke Test',
   note: 'Temporary deployment verification',
   idempotencyKey: positiveKey,
 };

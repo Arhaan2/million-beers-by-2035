@@ -40,7 +40,7 @@ The browser never mutates repository files and contains no GitHub token, crew co
 ```text
 apps/web/       React, TypeScript, Vite, Vitest, and static assets
 apps/api/       Cloudflare Worker, D1 migration, and Workers-runtime tests
-scripts/        Production-safe net-zero smoke test
+scripts/        Isolated smoke, integrity, operator, and release checks
 .github/        GitHub Pages workflow
 ```
 
@@ -100,7 +100,7 @@ The sequence records a single-person +3, a four-person +12, an exact idempotent 
 
 ## D1 and Worker deployment
 
-The Worker name is `million-beers-api`; the binding is `DB`; the database name is `million-beers-production`.
+The Worker name is `million-beers-api`; the binding is `DB`; the database name is `million-beers-production`. This project already has its production database: do not create, replace, seed, or restore it during an upgrade. Use the [guarded release procedure](docs/crew-release.md) for the live deployment. The following provisioning example is only for a separate new installation, never this existing live project.
 
 ```bash
 cd apps/api
@@ -211,18 +211,13 @@ Treat exports as sensitive operational data even though the public API exposes o
 
 For this migration, deploy in this order: finish local checks → export D1 → record integrity values → apply the remote migration → verify integrity → deploy the Worker → verify health and grouped summary → merge the frontend → verify GitHub Pages. This prevents the group-aware frontend from reaching an old API.
 
-## Production smoke test
+## Release verification
 
-The smoke script uses a fresh +1 event, verifies an identical retry is idempotent, adds a separate -1 correction, and confirms the final total equals the starting total. It never prints the token or code.
+Synthetic positive/negative smoke tests are restricted to isolated localhost data. Never run them against production, even if their net quantity would be zero: both audit records would remain.
 
-```bash
-API_BASE_URL=https://your-worker.workers.dev \
-ORIGIN=https://arhaan2.github.io \
-BEER_ADMIN_PIN='enter-code-in-your-shell' \
-npm run smoke
-```
+The crew upgrade uses additive projections, stable member records, durable idempotent drafts, bounded history, optional occurrence/memory metadata, and linked append-only corrections. See [architecture and API contracts](docs/crew-architecture.md), [guarded release and rollback](docs/crew-release.md), and the [actual upgrade status](docs/upgrade-plan.md). New functionality is server-gated until data and readiness checks pass; a feature branch is not proof of deployment.
 
-The two zero-net audit events remain in the append-only production ledger and are clearly attributed to `Production Smoke Test`.
+Production verification is read-only. A private D1 backup restored into an isolated database, per-ID integrity checkpoints, exact Worker content tags, and compatible backend readiness are required before the frontend release. Photo storage and per-person authentication are separate infrastructure-gated follow-ons.
 
 ## Security model
 
