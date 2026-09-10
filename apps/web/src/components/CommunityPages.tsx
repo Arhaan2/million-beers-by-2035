@@ -771,7 +771,11 @@ export function AboutPage({ summary }: { summary: DashboardSummary | null }) {
           <h3>Partners & the community story</h3>
           <p>
             This page uses real project records. No sponsors, testimonials, audience reach or
-            demographic claims are implied. A partner contact destination has not been configured.
+            demographic claims are implied.
+          </p>
+          <p>
+            For partnerships or questions, email{' '}
+            <a href="mailto:arhaanaggarwal@gmail.com">arhaanaggarwal@gmail.com</a>.
           </p>
           <a
             href="https://github.com/Arhaan2/million-beers-by-2035"
