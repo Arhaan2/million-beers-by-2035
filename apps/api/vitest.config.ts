@@ -9,11 +9,12 @@ export default defineConfig(async () => {
       cloudflareTest({
         wrangler: { configPath: './wrangler.jsonc' },
         miniflare: {
-          d1Databases: ['MIGRATION_DB'],
+          d1Databases: ['MIGRATION_DB', 'CREW_MIGRATION_DB', 'FAILED_CREW_MIGRATION_DB'],
           bindings: {
             TEST_MIGRATIONS: migrations,
             TEST_INITIAL_MIGRATION: [migrations[0]],
             TEST_GROUP_MIGRATION: [migrations[1]],
+            TEST_CREW_MIGRATION: [migrations[2]],
             BEER_ADMIN_PIN: 'test-crew-code',
             SESSION_SIGNING_SECRET: 'test-session-signing-secret-that-is-long-enough',
             RATE_LIMIT_SALT: 'test-rate-limit-salt-that-is-long-enough',

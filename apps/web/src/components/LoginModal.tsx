@@ -36,7 +36,13 @@ export function LoginModal({
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (open) window.setTimeout(() => inputRef.current?.focus(), 0);
+    if (!open) return;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const timer = window.setTimeout(() => inputRef.current?.focus(), 0);
+    return () => {
+      window.clearTimeout(timer);
+      previous?.focus();
+    };
   }, [open]);
 
   if (!open) return null;
@@ -104,12 +110,10 @@ export function LoginModal({
             ref={inputRef}
             id="crew-code"
             type="password"
-            inputMode="numeric"
             autoComplete="one-time-code"
-            pattern="[0-9]*"
             maxLength={64}
             value={code}
-            onChange={(event) => setCode(event.target.value.replace(/\D/gu, ''))}
+            onChange={(event) => setCode(event.target.value)}
             aria-describedby={error ? 'login-error' : undefined}
           />
           {error ? (

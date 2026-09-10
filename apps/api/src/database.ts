@@ -1,17 +1,25 @@
 import { ApiError } from './responses';
-import { ANONYMOUS_CONTRIBUTOR, normalizeContributorKey } from './schemas';
+import { canonicalEntryPayload, hasExtendedInput, normalizeContributorKey } from './schemas';
+import {
+  capabilities,
+  groupPublicEntries,
+  memoryValues,
+  publicEntry,
+  publicEntriesStatement,
+  publicTextCondition,
+  requireUpgradeWrites,
+} from './crew';
+import type { Database, PublicEntryRow } from './crew';
 import type {
   CreateEntryResult,
   EntryInput,
   EntryStats,
   EventInput,
-  PublicAllocation,
-  PublicEntry,
-  PublicEvent,
   RecordEventResult,
 } from './types';
 
 interface EventRow {
+  [key: string]: unknown;
   id: string;
   amount: number;
   contributor: string;
@@ -23,6 +31,7 @@ interface EventRow {
 interface EntryRow {
   id: string;
   idempotency_key: string;
+  payload_json: string | null;
   total_amount: number;
   note: string | null;
   allocation_count: number;
@@ -44,56 +53,7 @@ interface StateRow {
   event_count: number;
   entry_count: number;
   updated_at: number;
-}
-
-interface RecentEntryRow {
-  entry_id: string;
-  total_amount: number;
-  entry_note: string | null;
-  entry_created_at: number;
-  entry_local_day: string;
-  allocation_count: number;
-  allocation_id: string;
-  allocation_amount: number;
-  contributor: string;
-  allocation_index: number;
-}
-
-interface CrewSizeRow {
-  crew_size: unknown;
-}
-
-function toNonNegativeInteger(value: unknown): number {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed >= 0 ? Math.trunc(parsed) : 0;
-}
-
-function toPublicEvent(row: EventRow): PublicEvent {
-  return {
-    id: row.id,
-    amount: row.amount,
-    contributor: row.contributor,
-    note: row.note,
-    createdAt: row.created_at,
-    localDay: row.local_day,
-  };
-}
-
-function toPublicEntry(row: EntryRow, allocations: AllocationRow[]): PublicEntry {
-  return {
-    id: row.id,
-    totalAmount: row.total_amount,
-    note: row.note,
-    createdAt: row.created_at,
-    localDay: row.local_day,
-    isCorrection: row.total_amount < 0,
-    isGroup: row.allocation_count > 1,
-    allocations: allocations.map((allocation) => ({
-      id: allocation.id,
-      contributor: allocation.contributor,
-      amount: allocation.amount,
-    })),
-  };
+  revision: number;
 }
 
 export function localDayFromTimestamp(timestampMs: number, timezone: string): string {
@@ -114,8 +74,8 @@ async function readEntryByIdempotency(
 ): Promise<{ row: EntryRow; allocations: AllocationRow[] } | null> {
   const row = await database
     .prepare(
-      `SELECT id, idempotency_key, total_amount, note, allocation_count, created_at, local_day
-       FROM beer_entries WHERE idempotency_key = ?`,
+      `SELECT e.id, e.idempotency_key, e.total_amount, e.note, e.allocation_count, e.created_at, e.local_day, m.payload_json
+       FROM beer_entries e LEFT JOIN entry_metadata m ON m.entry_id = e.id WHERE e.idempotency_key = ?`,
     )
     .bind(idempotencyKey)
     .first<EntryRow>();
@@ -134,6 +94,9 @@ function entryMatchesInput(
   existing: { row: EntryRow; allocations: AllocationRow[] },
   input: EntryInput,
 ): boolean {
+  if (existing.row.payload_json !== null)
+    return existing.row.payload_json === canonicalEntryPayload(input);
+  if (hasExtendedInput(input)) return false;
   if (
     existing.row.total_amount !== input.totalAmount ||
     existing.row.note !== input.note ||
@@ -154,8 +117,8 @@ function entryMatchesInput(
 async function readState(database: D1Database | D1DatabaseSession): Promise<StateRow> {
   const state = await database
     .prepare(
-      `SELECT total, event_count, entry_count, updated_at
-       FROM challenge_state WHERE id = 1`,
+      `SELECT s.total, s.event_count, s.entry_count, s.updated_at, u.revision
+       FROM challenge_state s JOIN upgrade_state u ON u.id = s.id WHERE s.id = 1`,
     )
     .first<StateRow>();
   if (!state) throw new ApiError(500, 'Unable to read challenge state.', 'database_read_failed');
@@ -169,6 +132,7 @@ function publicStats(env: Env, state: StateRow): EntryStats {
     remaining: Math.max(0, target - state.total),
     entryCount: state.entry_count,
     allocationCount: state.event_count,
+    revision: state.revision,
   };
 }
 
@@ -186,7 +150,7 @@ async function existingEntryResult(
     );
   }
   return {
-    entry: toPublicEntry(existing.row, existing.allocations),
+    entry: await publicEntry(database, existing.row.id),
     stats: publicStats(env, await readState(database)),
     idempotent: true,
   };
@@ -198,8 +162,12 @@ export async function createBeerEntry(
   sessionFingerprint: string,
   nowMs = Date.now(),
 ): Promise<CreateEntryResult> {
-  const existing = await readEntryByIdempotency(env.DB, input.idempotencyKey);
-  if (existing) return existingEntryResult(env, existing, input);
+  const database = env.DB.withSession('first-primary');
+  const originalInput = input;
+  const existing = await readEntryByIdempotency(database, input.idempotencyKey);
+  if (existing) return existingEntryResult(env, existing, input, database);
+  if (hasExtendedInput(input)) await requireUpgradeWrites(database);
+  input = await resolveAllocations(database, input);
 
   const entryId = crypto.randomUUID();
   const localDay = localDayFromTimestamp(nowMs, env.CHALLENGE_TIMEZONE);
@@ -211,52 +179,59 @@ export async function createBeerEntry(
     ...allocation,
   }));
   const statements: D1PreparedStatement[] = [
-    env.DB.prepare(
-      `INSERT INTO beer_entries
+    database
+      .prepare(
+        `INSERT INTO beer_entries
        (id, idempotency_key, total_amount, note, allocation_count, created_at, local_day, session_fingerprint)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).bind(
-      entryId,
-      input.idempotencyKey,
-      input.totalAmount,
-      input.note,
-      allocationRows.length,
-      nowMs,
-      localDay,
-      sessionFingerprint,
-    ),
-    ...allocationRows.map((allocation) =>
-      env.DB.prepare(
-        `INSERT INTO beer_events
-         (id, idempotency_key, amount, contributor, contributor_key, note, created_at, local_day,
-          session_fingerprint, entry_id, allocation_index)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).bind(
-        allocation.id,
-        allocation.internalIdempotencyKey,
-        allocation.amount,
-        allocation.contributor,
-        allocation.contributorKey,
+      )
+      .bind(
+        entryId,
+        input.idempotencyKey,
+        input.totalAmount,
         input.note,
+        allocationRows.length,
         nowMs,
         localDay,
         sessionFingerprint,
-        entryId,
-        allocation.allocationIndex,
       ),
+    ...allocationRows.map((allocation) =>
+      database
+        .prepare(
+          `INSERT INTO beer_events
+         (id, idempotency_key, amount, contributor, contributor_key, note, created_at, local_day,
+          session_fingerprint, entry_id, allocation_index)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+          allocation.id,
+          allocation.internalIdempotencyKey,
+          allocation.amount,
+          allocation.contributor,
+          allocation.contributorKey,
+          input.note,
+          nowMs,
+          localDay,
+          sessionFingerprint,
+          entryId,
+          allocation.allocationIndex,
+        ),
     ),
-    env.DB.prepare(
-      `UPDATE challenge_state
+    database
+      .prepare(
+        `UPDATE challenge_state
        SET total = total + ?,
            event_count = event_count + ?,
            entry_count = entry_count + 1,
            updated_at = ?
        WHERE id = 1
        RETURNING total, event_count, entry_count, updated_at`,
-    ).bind(input.totalAmount, allocationRows.length, nowMs),
+      )
+      .bind(input.totalAmount, allocationRows.length, nowMs),
     ...allocationRows.map((allocation) =>
-      env.DB.prepare(
-        `INSERT INTO contributor_totals
+      database
+        .prepare(
+          `INSERT INTO contributor_totals
          (contributor_key, display_name, net_total, event_count, updated_at)
          VALUES (?, ?, ?, 1, ?)
          ON CONFLICT(contributor_key) DO UPDATE SET
@@ -264,10 +239,12 @@ export async function createBeerEntry(
            net_total = contributor_totals.net_total + excluded.net_total,
            event_count = contributor_totals.event_count + 1,
            updated_at = excluded.updated_at`,
-      ).bind(allocation.contributorKey, allocation.contributor, allocation.amount, nowMs),
+        )
+        .bind(allocation.contributorKey, allocation.contributor, allocation.amount, nowMs),
     ),
-    env.DB.prepare(
-      `INSERT INTO daily_totals
+    database
+      .prepare(
+        `INSERT INTO daily_totals
        (local_day, net_total, event_count, entry_count, updated_at)
        VALUES (?, ?, ?, 1, ?)
        ON CONFLICT(local_day) DO UPDATE SET
@@ -275,41 +252,91 @@ export async function createBeerEntry(
          event_count = daily_totals.event_count + excluded.event_count,
          entry_count = daily_totals.entry_count + 1,
          updated_at = excluded.updated_at`,
-    ).bind(localDay, input.totalAmount, allocationRows.length, nowMs),
+      )
+      .bind(localDay, input.totalAmount, allocationRows.length, nowMs),
   ];
-  const stateResultIndex = 1 + allocationRows.length;
+  if (input.correctionOfEntryId) {
+    statements.splice(
+      1,
+      0,
+      database
+        .prepare('INSERT INTO entry_corrections (entry_id, source_entry_id) VALUES (?, ?)')
+        .bind(entryId, input.correctionOfEntryId),
+    );
+  }
+  statements.push(
+    database
+      .prepare(
+        `INSERT INTO entry_metadata (entry_id, occurred_at, occurred_day, occurrence_timezone, occurrence_precision, title, short_note, venue, city, beer, brewery, visibility, payload_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        entryId,
+        input.occurredAt ? Date.parse(input.occurredAt) : null,
+        input.occurredAt && input.occurrenceTimezone
+          ? localDayFromTimestamp(Date.parse(input.occurredAt), input.occurrenceTimezone)
+          : null,
+        input.occurrenceTimezone ?? null,
+        input.occurrencePrecision ?? null,
+        ...memoryValues(input.memory),
+        canonicalEntryPayload(originalInput),
+      ),
+  );
+  if (input.correctionOfEntryId) {
+    for (const allocation of allocationRows) {
+      statements.push(
+        database
+          .prepare(
+            'INSERT INTO allocation_corrections (allocation_id, source_allocation_id, amount) VALUES (?, ?, ?)',
+          )
+          .bind(allocation.id, allocation.sourceAllocationId ?? '', -allocation.amount),
+      );
+    }
+  }
+  statements.push(
+    database.prepare(
+      'SELECT s.total, s.event_count, s.entry_count, s.updated_at, u.revision FROM challenge_state s JOIN upgrade_state u ON u.id = s.id WHERE s.id = 1',
+    ),
+  );
+  const stateResultIndex = statements.length - 1;
 
   try {
-    const results = await env.DB.batch(statements);
+    const results = await database.batch(statements);
     const stateRows = results[stateResultIndex]?.results as StateRow[] | undefined;
     const state = stateRows?.[0];
     if (!state) throw new Error('Aggregate update did not return challenge state');
-    const publicAllocations: PublicAllocation[] = allocationRows.map((allocation) => ({
-      id: allocation.id,
-      contributor: allocation.contributor,
-      amount: allocation.amount,
-    }));
     return {
-      entry: {
-        id: entryId,
-        totalAmount: input.totalAmount,
-        note: input.note,
-        createdAt: nowMs,
-        localDay,
-        isCorrection: input.totalAmount < 0,
-        isGroup: publicAllocations.length > 1,
-        allocations: publicAllocations,
-      },
+      entry: await publicEntry(database, entryId),
       stats: publicStats(env, state),
+      revision: state.revision,
       idempotent: false,
     };
-  } catch {
+  } catch (error) {
     // A concurrent request may have won the unique parent-key race. Start a
     // primary-anchored session so the winner is visible before deciding whether
     // this is an exact retry or a conflicting key reuse.
     const session = env.DB.withSession('first-primary');
     const concurrent = await readEntryByIdempotency(session, input.idempotencyKey);
-    if (concurrent) return existingEntryResult(env, concurrent, input, session);
+    if (concurrent) return existingEntryResult(env, concurrent, originalInput, session);
+    const message = error instanceof Error ? error.message : '';
+    if (message.includes('feature_disabled'))
+      throw new ApiError(
+        503,
+        'Enhanced entry features are temporarily unavailable. Existing entry recording remains available.',
+        'feature_disabled',
+      );
+    if (message.includes('correction_allowance'))
+      throw new ApiError(
+        409,
+        'This correction exceeds the remaining amount on its original entry or allocation.',
+        'correction_allowance',
+      );
+    if (message.includes('duplicate_member'))
+      throw new ApiError(
+        400,
+        'A member may appear only once in an entry, including aliases.',
+        'duplicate_member',
+      );
     if (input.totalAmount < 0) {
       const state = await readState(session);
       if (state.total + input.totalAmount < 0) {
@@ -357,6 +384,7 @@ export async function recordEvent(
     },
     entry: result.entry,
     total: result.stats.total,
+    ...(result.stats.revision !== undefined ? { revision: result.stats.revision } : {}),
     idempotent: result.idempotent,
   };
 }
@@ -372,103 +400,58 @@ function recentCalendarDays(nowMs: number, timezone: string): string[] {
   );
 }
 
-function groupRecentEntries(rows: RecentEntryRow[]): PublicEntry[] {
-  const grouped = new Map<string, PublicEntry>();
-  for (const row of rows) {
-    let entry = grouped.get(row.entry_id);
-    if (!entry) {
-      entry = {
-        id: row.entry_id,
-        totalAmount: row.total_amount,
-        note: row.entry_note,
-        createdAt: row.entry_created_at,
-        localDay: row.entry_local_day,
-        isCorrection: row.total_amount < 0,
-        isGroup: row.allocation_count > 1,
-        allocations: [],
-      };
-      grouped.set(row.entry_id, entry);
-    }
-    entry.allocations.push({
-      id: row.allocation_id,
-      contributor: row.contributor,
-      amount: row.allocation_amount,
-    });
-  }
-  return [...grouped.values()];
-}
-
 export async function getSummary(env: Env, nowMs = Date.now()): Promise<unknown> {
+  const database = env.DB.withSession('first-primary');
   const target = Number(env.CHALLENGE_TARGET);
   const days = recentCalendarDays(nowMs, env.CHALLENGE_TIMEZONE);
-  const primarySummaryQuery = Promise.all([
-    readState(env.DB),
-    env.DB.prepare(
-      `SELECT id, amount, contributor, note, created_at, local_day
-       FROM beer_events ORDER BY created_at DESC, allocation_index ASC LIMIT ?`,
-    )
-      .bind(25)
-      .all<EventRow>(),
-    env.DB.prepare(
-      `WITH latest_entries AS (
-         SELECT id, total_amount, note, allocation_count, created_at, local_day
-         FROM beer_entries
-         ORDER BY created_at DESC, id DESC
-         LIMIT ?
-       )
-       SELECT
-         latest_entries.id AS entry_id,
-         latest_entries.total_amount,
-         latest_entries.note AS entry_note,
-         latest_entries.created_at AS entry_created_at,
-         latest_entries.local_day AS entry_local_day,
-         latest_entries.allocation_count,
-         beer_events.id AS allocation_id,
-         beer_events.amount AS allocation_amount,
-         beer_events.contributor,
-         beer_events.allocation_index
-       FROM latest_entries
-       JOIN beer_events ON beer_events.entry_id = latest_entries.id
-       ORDER BY latest_entries.created_at DESC, latest_entries.id DESC, beer_events.allocation_index ASC`,
-    )
-      .bind(25)
-      .all<RecentEntryRow>(),
-    env.DB.prepare(
-      `SELECT display_name, net_total, event_count
-       FROM contributor_totals
-       ORDER BY net_total DESC, updated_at ASC
-       LIMIT ?`,
-    )
-      .bind(10)
-      .all<{ display_name: string; net_total: number; event_count: number }>(),
-    env.DB.prepare(
-      `SELECT local_day, net_total, event_count, entry_count
-       FROM daily_totals WHERE local_day >= ? ORDER BY local_day ASC`,
-    )
-      .bind(days[0])
-      .all<{
-        local_day: string;
-        net_total: number;
-        event_count: number;
-        entry_count: number;
-      }>(),
+  // One read transaction: the revision and every returned projection describe
+  // the same snapshot even when an old client writes while the request runs.
+  const results = await database.batch<Record<string, unknown>>([
+    database.prepare(
+      'SELECT s.total, s.event_count, s.entry_count, s.updated_at, u.revision, u.mutations_enabled, u.schema_version FROM challenge_state s JOIN upgrade_state u ON u.id = s.id WHERE s.id = 1',
+    ),
+    publicEntriesStatement(database),
+    database.prepare(`SELECT a.id, a.amount,
+      CASE WHEN cm.public_display = 0 THEN 'Private member' ELSE a.contributor END AS contributor,
+      CASE WHEN ${publicTextCondition} THEN a.note ELSE NULL END AS note, a.created_at, a.local_day
+      FROM beer_events a JOIN beer_entries e ON e.id = a.entry_id
+      LEFT JOIN entry_metadata m ON m.entry_id = e.id
+      LEFT JOIN allocation_members am ON am.allocation_id = a.id LEFT JOIN crew_members cm ON cm.id = am.member_id
+      ORDER BY a.created_at DESC, a.allocation_index ASC, a.id DESC LIMIT 25`),
+    database.prepare(`SELECT c.display_name, c.net_total, c.event_count FROM contributor_totals c
+      LEFT JOIN member_aliases a ON a.alias_key = c.contributor_key LEFT JOIN crew_members m ON m.id = a.member_id
+      WHERE coalesce(m.public_display, 1) = 1 ORDER BY c.net_total DESC, c.updated_at ASC LIMIT 10`),
+    database
+      .prepare(
+        'SELECT local_day, net_total, event_count, entry_count FROM daily_totals WHERE local_day >= ? ORDER BY local_day',
+      )
+      .bind(days[0]),
+    database.prepare(
+      'SELECT COUNT(*) AS crewSize FROM contributor_activity WHERE positive_allocations > 0',
+    ),
+    database
+      .prepare(
+        `SELECT
+      (SELECT COUNT(*) FROM crew_members WHERE public_display = 1) AS directorySize,
+      (SELECT COUNT(*) FROM community_member_activity a JOIN crew_members m ON m.id = a.member_id WHERE a.positive_allocations > 0 AND m.public_display = 1) AS namedContributors,
+      (SELECT COUNT(*) FROM community_member_activity a JOIN crew_members m ON m.id = a.member_id WHERE a.positive_allocations > 0 AND m.public_display = 1 AND a.last_recorded_at >= ?) AS activeParticipants,
+      (SELECT entry_count FROM challenge_state WHERE id = 1) - (SELECT COUNT(*) FROM entry_classification WHERE is_system = 1) AS entryCount`,
+      )
+      .bind(nowMs - 30 * 86_400_000),
+    publicEntriesStatement(
+      database,
+      'NOT EXISTS (SELECT 1 FROM entry_classification c WHERE c.entry_id = e.id AND c.is_system = 1)',
+    ),
   ]);
-  const crewSizeQuery = env.DB.prepare(
-    `SELECT COUNT(DISTINCT contributor_key) AS crew_size
-       FROM beer_events
-       WHERE amount > 0
-         AND contributor_key IS NOT NULL
-         AND contributor_key <> ''
-         AND contributor_key <> ?`,
-  )
-    .bind(normalizeContributorKey(ANONYMOUS_CONTRIBUTOR))
-    .first<CrewSizeRow>();
-  const [[state, recentEvents, recentEntryRows, leaderboard, daily], crewSizeRow] =
-    await Promise.all([primarySummaryQuery, crewSizeQuery]);
-
-  const total = state.total;
-  const dailyMap = new Map(daily.results.map((row) => [row.local_day, row]));
+  const state = results[0]?.results[0] as
+    (StateRow & { mutations_enabled: number; schema_version: number }) | undefined;
+  if (!state) throw new ApiError(503, 'The database is not ready.', 'schema_not_ready');
+  const daily = results[4]?.results ?? [];
+  const dailyMap = new Map(daily.map((row) => [String(row.local_day), row]));
+  const entries = groupPublicEntries((results[1]?.results ?? []) as PublicEntryRow[]);
   return {
+    revision: state.revision,
+    capabilities: capabilities(state),
     challenge: {
       target,
       startAt: env.CHALLENGE_START_ISO,
@@ -476,18 +459,39 @@ export async function getSummary(env: Env, nowMs = Date.now()): Promise<unknown>
       timezone: env.CHALLENGE_TIMEZONE,
     },
     stats: {
-      total,
-      remaining: Math.max(0, target - total),
+      total: state.total,
+      remaining: Math.max(0, target - state.total),
       eventCount: state.entry_count,
       entryCount: state.entry_count,
       allocationCount: state.event_count,
-      crewSize: toNonNegativeInteger(crewSizeRow?.crew_size),
-      percentComplete: target > 0 ? Math.min(100, (total / target) * 100) : 100,
+      crewSize: Number(results[5]?.results[0]?.crewSize ?? 0),
+      percentComplete: target > 0 ? Math.min(100, (state.total / target) * 100) : 100,
       updatedAt: state.updated_at,
+      revision: state.revision,
     },
-    recentEntries: groupRecentEntries(recentEntryRows.results),
-    recentEvents: recentEvents.results.map(toPublicEvent),
-    leaderboard: leaderboard.results.map((row) => ({
+    community: {
+      ...results[6]?.results[0],
+      definitions: {
+        directorySize: 'Public member records; not verified people or accounts.',
+        namedContributors:
+          'Public named members with a positive allocation, excluding verified system records.',
+        activeParticipants:
+          'Those named contributors with a recorded allocation in the last 30 days.',
+        entryCount:
+          'Recorded submissions excluding verified system records; not verified gatherings.',
+      },
+    },
+    recentEntries: entries,
+    recentCommunityEntries: groupPublicEntries((results[7]?.results ?? []) as PublicEntryRow[]),
+    recentEvents: ((results[2]?.results ?? []) as EventRow[]).map((row) => ({
+      id: row.id,
+      amount: row.amount,
+      contributor: row.contributor,
+      note: row.note,
+      createdAt: row.created_at,
+      localDay: row.local_day,
+    })),
+    leaderboard: (results[3]?.results ?? []).map((row) => ({
       contributor: row.display_name,
       netTotal: row.net_total,
       eventCount: row.event_count,
@@ -502,4 +506,75 @@ export async function getSummary(env: Env, nowMs = Date.now()): Promise<unknown>
       };
     }),
   };
+}
+
+async function resolveAllocations(database: Database, input: EntryInput): Promise<EntryInput> {
+  const identities = new Set<string>();
+  const sources = input.correctionOfEntryId
+    ? (
+        await database
+          .prepare(
+            'SELECT id, entry_id, amount, contributor, contributor_key FROM beer_events WHERE entry_id = ? ORDER BY allocation_index',
+          )
+          .bind(input.correctionOfEntryId)
+          .all<AllocationRow>()
+      ).results
+    : [];
+  if (input.correctionOfEntryId && (!sources.length || sources.some((row) => row.amount < 0)))
+    throw new ApiError(
+      400,
+      'Linked corrections must target an existing positive entry.',
+      'invalid_correction',
+    );
+  const allocations = [];
+  for (const allocation of input.allocations) {
+    let contributor = allocation.contributor;
+    let contributorKey = allocation.contributorKey;
+    if (input.correctionOfEntryId) {
+      const source = sources.find((row) => row.id === allocation.sourceAllocationId);
+      if (!source)
+        throw new ApiError(
+          400,
+          'A correction allocation does not belong to its source entry.',
+          'invalid_correction',
+        );
+      contributor = source.contributor;
+      contributorKey = source.contributor_key;
+    } else if (allocation.memberId) {
+      const member = await database
+        .prepare('SELECT display_name FROM crew_members WHERE id = ? AND public_display = 1')
+        .bind(allocation.memberId)
+        .first<{ display_name: string }>();
+      if (!member)
+        throw new ApiError(400, 'Select an available member from the directory.', 'invalid_member');
+      contributor = member.display_name;
+      contributorKey = normalizeContributorKey(contributor);
+      const alias = await database
+        .prepare('SELECT member_id FROM member_aliases WHERE alias_key = ?')
+        .bind(contributorKey)
+        .first<{ member_id: string }>();
+      if (alias?.member_id !== allocation.memberId)
+        throw new ApiError(
+          409,
+          'Member aliases need operator reconciliation before recording.',
+          'member_alias_conflict',
+        );
+    }
+    const alias = await database
+      .prepare('SELECT member_id FROM member_aliases WHERE alias_key = ?')
+      .bind(contributorKey)
+      .first<{ member_id: string }>();
+    const identity = input.correctionOfEntryId
+      ? (allocation.sourceAllocationId ?? contributorKey)
+      : (alias?.member_id ?? contributorKey);
+    if (identities.has(identity))
+      throw new ApiError(
+        400,
+        'A member may appear only once in an entry, including aliases.',
+        'duplicate_member',
+      );
+    identities.add(identity);
+    allocations.push({ ...allocation, contributor, contributorKey });
+  }
+  return { ...input, allocations };
 }

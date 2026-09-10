@@ -13,3 +13,12 @@ Object.defineProperty(window, 'matchMedia', {
     dispatchEvent: () => false,
   }),
 });
+
+// JSDOM has no Web Locks implementation; model the supported browser API here.
+Object.defineProperty(navigator, 'locks', {
+  configurable: true,
+  value: {
+    request: (_name: string, _options: unknown, callback: (lock: object) => Promise<unknown>) =>
+      callback({ name: 'million-beers-entry-submit', mode: 'exclusive' }),
+  },
+});

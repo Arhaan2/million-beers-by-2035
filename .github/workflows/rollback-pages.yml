@@ -1,0 +1,87 @@
+name: Restore verified original frontend
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: million-beers-production
+  cancel-in-progress: false
+
+env:
+  ROLLBACK_SOURCE: ab746e2aabec8774cf5f025ab466c68bf31377d8
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out retained compatible backend and release gate
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - name: Require the deployed compatible backend
+        run: node scripts/check-readiness.mjs
+      - name: Check out the immutable original frontend source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.ROLLBACK_SOURCE }}
+          path: rollback-source
+          persist-credentials: false
+      - name: Verify original source identity
+        working-directory: rollback-source
+        run: test "$(git rev-parse HEAD)" = "$ROLLBACK_SOURCE"
+      - name: Install original locked dependencies
+        working-directory: rollback-source
+        run: npm ci
+      - name: Verify original frontend
+        working-directory: rollback-source
+        run: npm run test:web && npm run typecheck --workspace @million-beers/web
+      - name: Build the original frontend for the existing URL
+        working-directory: rollback-source
+        run: npm run build:web
+        env:
+          VITE_BASE_PATH: /million-beers-by-2035/
+      - name: Record frontend and retained backend source identities
+        run: |
+          node --input-type=module -e 'import {writeFileSync} from "node:fs"; import {apiSourceTag} from "./scripts/api-source-tag.mjs"; writeFileSync("rollback-source/apps/web/dist/release.json", JSON.stringify({commit:process.env.ROLLBACK_SOURCE,backend:await apiSourceTag(),rollback:true}));'
+      - name: Upload the verified original frontend
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: rollback-source/apps/web/dist
+
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    needs: build
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the retained compatible backend
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - name: Recheck compatible backend immediately before rollback
+        run: node scripts/check-readiness.mjs
+      - name: Configure existing Pages site
+        uses: actions/configure-pages@v5
+      - name: Restore original frontend while retaining database and Worker
+        id: deployment
+        uses: actions/deploy-pages@v4

@@ -19,9 +19,17 @@ export function readSession(): EditorSession | null {
 }
 
 export function storeSession(session: EditorSession): void {
-  sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
+  try {
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
+  } catch {
+    /* Session remains in memory for this tab. */
+  }
 }
 
 export function clearSession(): void {
-  sessionStorage.removeItem(SESSION_KEY);
+  try {
+    sessionStorage.removeItem(SESSION_KEY);
+  } catch {
+    /* In-memory logout still succeeds. */
+  }
 }

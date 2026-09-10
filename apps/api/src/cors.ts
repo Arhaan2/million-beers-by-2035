@@ -32,7 +32,7 @@ export function optionsResponse(request: Request, env: Env, context: RequestCont
       status: 204,
       extraHeaders: {
         'Access-Control-Allow-Headers': 'Authorization, Content-Type',
-        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
         'Access-Control-Max-Age': '86400',
       },
     },

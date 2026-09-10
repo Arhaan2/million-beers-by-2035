@@ -43,12 +43,25 @@ function jsonResponse(value: unknown, status = 200): Response {
 function renderDashboard(crewSize = summary.stats.crewSize): void {
   vi.stubGlobal(
     'fetch',
-    vi.fn(() =>
+    vi.fn((input: RequestInfo | URL) =>
       Promise.resolve(
-        jsonResponse({
-          ...summary,
-          stats: { ...summary.stats, crewSize },
-        }),
+        jsonResponse(
+          (typeof input === 'string'
+            ? input
+            : input instanceof URL
+              ? input.href
+              : input.url
+          ).endsWith('/api/milestones')
+            ? {
+                dateBasis: 'recorded-day-close',
+                limitation: 'Daily closing totals',
+                milestones: [],
+              }
+            : {
+                ...summary,
+                stats: { ...summary.stats, crewSize },
+              },
+        ),
       ),
     ),
   );
@@ -62,37 +75,26 @@ beforeEach(() => {
 });
 
 describe('App', () => {
-  it('renders Crew Size once as the third primary stat without removing existing cards', async () => {
+  it('shows one canonical hero total and keeps useful statistics in an expandable area', async () => {
     renderDashboard();
-
-    const crewSizeLabel = await screen.findByText('Crew Size');
-    const grid = crewSizeLabel.closest('.stats-grid');
-    expect(grid).not.toBeNull();
-    expect(screen.getAllByText('Crew Size')).toHaveLength(1);
-    expect(screen.getByText('12 distinct people recorded')).toBeInTheDocument();
-    expect(
-      Array.from(grid?.children ?? []).map((card) => card.querySelector('p')?.textContent),
-    ).toEqual([
-      'Beers recorded',
-      'Beers remaining',
-      'Crew Size',
-      'Recorded updates',
-      'Group average / elapsed day',
-      'Math required / remaining day',
-      'Math required / week',
-      'Projected finish',
-      'Next milestone',
-    ]);
+    expect(await screen.findByRole('heading', { level: 2, name: '7' })).toBeInTheDocument();
+    expect(screen.queryByText('Beers recorded')).not.toBeInTheDocument();
+    const statistics = screen.getByText('Explore the numbers').closest('details');
+    expect(statistics).not.toHaveAttribute('open');
+    fireEvent.click(screen.getByText('Explore the numbers'));
+    expect(screen.getByText('Named contributor records')).toBeInTheDocument();
+    expect(screen.getByText('Raw allocation count')).toBeInTheDocument();
+    expect(screen.getByText('Extrapolated finish')).toBeInTheDocument();
+    expect(screen.getByRole('navigation', { name: 'Main navigation' })).toBeInTheDocument();
   });
 
-  it.each([
-    [0, 'No named crew members yet'],
-    [1, '1 distinct person recorded'],
-    [2, '2 distinct people recorded'],
-  ])('uses the correct Crew Size helper text for %i', async (crewSize, helperText) => {
-    renderDashboard(crewSize);
-    expect(await screen.findByText(helperText)).toBeInTheDocument();
-  });
+  it.each([0, 1, 2])(
+    'uses an honest named-record label for legacy crew size %i',
+    async (crewSize) => {
+      renderDashboard(crewSize);
+      expect(await screen.findByText(`${crewSize} named contributor records`)).toBeInTheDocument();
+    },
+  );
 
   it('loads API data and moves into the logged-in state', async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
@@ -111,7 +113,7 @@ describe('App', () => {
     await user.click(screen.getByRole('button', { name: 'Crew login' }));
     await user.type(screen.getByLabelText('Crew code'), '9876');
     await user.click(screen.getByRole('button', { name: 'Unlock editor' }));
-    expect(await screen.findByRole('button', { name: 'Add beers' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Log out' })).toBeInTheDocument();
     expect(sessionStorage.getItem('million-beers-editor-session')).toContain('signed-token');
   });
 

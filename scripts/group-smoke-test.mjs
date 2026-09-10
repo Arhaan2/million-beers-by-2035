@@ -2,6 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 
 const apiBaseUrl = (process.env.API_BASE_URL ?? 'http://127.0.0.1:8787').replace(/\/$/u, '');
+if (!['localhost', '127.0.0.1', '[::1]'].includes(new URL(apiBaseUrl).hostname)) {
+  throw new Error('Synthetic mutation checks are restricted to isolated localhost data.');
+}
 const origin = process.env.ORIGIN ?? 'http://localhost:5173';
 let crewCode = process.env.BEER_ADMIN_PIN;
 

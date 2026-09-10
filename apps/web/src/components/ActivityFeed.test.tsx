@@ -56,7 +56,7 @@ describe('ActivityFeed', () => {
         ]}
       />,
     );
-    expect(screen.getByText('Correction')).toBeInTheDocument();
+    expect(screen.getByText('Legacy adjustment')).toBeInTheDocument();
     expect(screen.getByText('Correcting duplicate round')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Show allocations' }));
     expect(screen.getAllByText('−3')).toHaveLength(2);
