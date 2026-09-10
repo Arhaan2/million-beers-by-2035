@@ -75,3 +75,15 @@ Each coherent phase is committed on the feature branch. Final release evidence r
 - [PR CI checks](https://github.com/Arhaan2/million-beers-by-2035/pull/3/checks) run the complete quality/build and isolated browser suites. PRs cannot upload or deploy Pages artifacts.
 - Backend candidate source tag: `crew-39f0cf60dc6de66cba025f19369b53323c589476`. No production Worker release ID is claimed: current identity could not be read with the available Cloudflare authorization. No remote migrations were applied by this work; actual remote migration state is still unverified.
 - Main and the existing production URLs remain unchanged. Do not merge or deploy this PR until the private production recovery, migration and per-ID integrity gates above have passed.
+
+### Access and recovery resumed — 2026-09-09
+
+The blocked status above describes the earlier checkpoint. Resource-specific access now succeeds with a directory-bound Wrangler OAuth profile granting account/user read, Worker-script write and D1 write. No environment token overrides were present. Shared login settings and secrets were preserved.
+
+A complete private production export finished in 2.785 seconds after its possible query-blocking impact was announced. SHA-256: `33d6e6594b7a871d76f406e00cfb200fddc5ba94d9cea6f346dad917074908d3`. Independent SQLite and isolated Worker/D1 restorations verified 317 entries, 331 allocations and total 1,107, every original immutable ID/hash, relationships, ordering and contributor/day aggregates. A current Time Travel bookmark is retained privately; successful 29-day lookup and rejection beyond 30 days confirmed the actual 30-day window. No Time Travel restore was run.
+
+Real-data rehearsal passed old deployed Worker writes on 0003 alone and both migrations, old event-only inserts, exact retries, metadata edits, concurrent corrections, privacy redaction and the reviewed capability-off fallback. No preliminary Worker bridge is required. Subsequent private single-statement snapshots preserve original IDs while allowing legitimate appends; they supplement the complete export and separate schema checks.
+
+The first remote 0003 attempt was rejected with `incomplete input`. Readback proved the original schema and only migrations 0001/0002 remained, with all original ledger hashes unchanged. Availability samples returned HTTP 200. The trigger guards matched the documented [D1 CASE/END parser issue](https://github.com/cloudflare/workers-sdk/issues/4727). The pending 0003/0004 files now parenthesize only their ten CASE guards; no applied migration or constraint behavior was changed. Local tests use Wrangler's client-side SQL splitter, while remote migration requests send raw SQL, so passing local execution alone did not expose this parser difference.
+
+Release progression remains paused for verification of this targeted syntax fix. No Worker deployment, capability enablement, merge or Pages deployment has occurred at this checkpoint. The original frontend, Worker artifact, complete export and private manifests remain preserved.

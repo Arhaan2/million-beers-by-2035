@@ -76,11 +76,11 @@ BEGIN
   INSERT OR IGNORE INTO member_aliases (alias_key, member_id, display_name)
   SELECT NEW.contributor_key, 'member-' || NEW.id, NEW.contributor
   WHERE NOT EXISTS (SELECT 1 FROM member_aliases WHERE alias_key = NEW.contributor_key);
-  SELECT CASE WHEN EXISTS (
+  SELECT (CASE WHEN EXISTS (
     SELECT 1 FROM allocation_members am JOIN member_aliases a ON a.member_id = am.member_id
     WHERE am.entry_id = coalesce(NEW.entry_id, 'legacy-' || NEW.id) AND a.alias_key = NEW.contributor_key
   ) AND NOT EXISTS (SELECT 1 FROM entry_corrections WHERE entry_id = NEW.entry_id)
-  THEN RAISE(ABORT, 'duplicate_member') END;
+  THEN RAISE(ABORT, 'duplicate_member') END);
   INSERT INTO allocation_members (allocation_id, entry_id, member_id)
   SELECT NEW.id, coalesce(NEW.entry_id, 'legacy-' || NEW.id), member_id
   FROM member_aliases WHERE alias_key = NEW.contributor_key;
@@ -196,20 +196,20 @@ CREATE TABLE allocation_corrections (
 );
 CREATE INDEX idx_allocation_corrections_source ON allocation_corrections (source_allocation_id, amount);
 CREATE TRIGGER crew_correction_parent BEFORE INSERT ON entry_corrections BEGIN
-  SELECT CASE WHEN NOT EXISTS (
+  SELECT (CASE WHEN NOT EXISTS (
     SELECT 1 FROM beer_entries s, beer_entries c
     WHERE s.id = NEW.source_entry_id AND c.id = NEW.entry_id AND s.total_amount > 0 AND c.total_amount < 0
       AND s.total_amount + coalesce((SELECT SUM(p.total_amount) FROM entry_corrections l JOIN beer_entries p ON p.id = l.entry_id WHERE l.source_entry_id = s.id), 0) >= -c.total_amount
-  ) THEN RAISE(ABORT, 'correction_allowance') END;
+  ) THEN RAISE(ABORT, 'correction_allowance') END);
 END;
 CREATE TRIGGER crew_correction_allocation BEFORE INSERT ON allocation_corrections BEGIN
-  SELECT CASE WHEN NOT EXISTS (
+  SELECT (CASE WHEN NOT EXISTS (
     SELECT 1 FROM beer_events s, beer_events c JOIN entry_corrections l ON l.entry_id = c.entry_id
     WHERE s.id = NEW.source_allocation_id AND c.id = NEW.allocation_id
       AND s.entry_id = l.source_entry_id AND s.amount > 0 AND c.amount = -NEW.amount
       AND s.contributor_key = c.contributor_key
       AND s.amount - coalesce((SELECT SUM(amount) FROM allocation_corrections WHERE source_allocation_id = s.id), 0) >= NEW.amount
-  ) THEN RAISE(ABORT, 'correction_allowance') END;
+  ) THEN RAISE(ABORT, 'correction_allowance') END);
 END;
 CREATE TABLE projection_audit (
   id TEXT PRIMARY KEY,
