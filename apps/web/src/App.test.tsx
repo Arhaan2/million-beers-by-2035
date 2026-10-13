@@ -71,10 +71,51 @@ function renderDashboard(crewSize = summary.stats.crewSize): void {
 beforeEach(() => {
   sessionStorage.clear();
   localStorage.clear();
+  window.history.replaceState(null, '', '/');
   vi.restoreAllMocks();
 });
 
 describe('App', () => {
+  it('skips to content without leaving the current page', async () => {
+    window.history.replaceState(null, '', '/#/about');
+    renderDashboard();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('link', { name: 'Skip to main content' }));
+    expect(window.location.hash).toBe('#/about');
+    expect(screen.getByRole('main')).toHaveFocus();
+    expect(
+      screen.getByRole('heading', { name: 'An impossible number. Real time together.' }),
+    ).toBeInTheDocument();
+  });
+
+  it('restores the recording trigger after the login and editor dialog flow', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) => {
+        const url =
+          typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+        if (url.endsWith('/api/login'))
+          return Promise.resolve(jsonResponse({ token: 'signed-token', expiresAt: 4_102_444_800 }));
+        if (url.endsWith('/api/session')) return Promise.resolve(jsonResponse({ valid: true }));
+        if (url.endsWith('/api/milestones'))
+          return Promise.resolve(jsonResponse({ milestones: [] }));
+        return Promise.resolve(jsonResponse(summary));
+      }),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+    const opener = await screen.findByRole('button', { name: 'Record entry' });
+    await user.click(opener);
+    expect(screen.getByRole('main').closest('.app-content')).toHaveAttribute('inert');
+    await user.type(screen.getByLabelText('Crew code'), 'test-code');
+    await user.click(screen.getByRole('button', { name: 'Unlock editor' }));
+    await screen.findByRole('dialog', { name: 'Record entry' });
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    await waitFor(() => expect(opener).toHaveFocus());
+    expect(screen.getByRole('main').closest('.app-content')).not.toHaveAttribute('inert');
+  });
+
   it('shows one canonical hero total and keeps useful statistics in an expandable area', async () => {
     renderDashboard();
     expect(await screen.findByRole('heading', { level: 2, name: '7' })).toBeInTheDocument();
@@ -148,15 +189,17 @@ describe('UpdateModal', () => {
 
   it('requires correction confirmation and submits a negative amount', async () => {
     const submit = vi.fn<(payload: EntryPayload) => Promise<void>>(() => Promise.resolve());
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
     render(<UpdateModal open onClose={() => undefined} onSubmit={submit} />);
     fireEvent.click(screen.getByLabelText(/Correction mode/u));
     fireEvent.change(screen.getByLabelText('Correction reason'), {
       target: { value: 'Duplicate entry' },
     });
     fireEvent.click(screen.getByRole('button', { name: /Review correction/u }));
+    expect(screen.getByRole('heading', { name: 'Review correction' })).toHaveFocus();
+    expect(screen.getByText('Record a correction of 1 beer?')).toBeInTheDocument();
+    expect(submit).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm correction' }));
     await waitFor(() => expect(submit).toHaveBeenCalledOnce());
-    expect(confirm).toHaveBeenCalledWith('Record a correction of -1 beers?');
     expect(submit.mock.calls[0]?.[0]).toMatchObject({
       totalAmount: -1,
       allocations: [{ amount: -1 }],

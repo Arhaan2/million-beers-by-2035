@@ -4,7 +4,8 @@ export function Toast({ message, kind }: { message: string | null; kind: 'succes
     <div
       className={`toast toast--${kind}`}
       role={kind === 'error' ? 'alert' : 'status'}
-      aria-live="polite"
+      aria-live={kind === 'error' ? 'assertive' : 'polite'}
+      aria-atomic="true"
     >
       {message}
     </div>

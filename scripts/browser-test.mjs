@@ -321,7 +321,7 @@ async function loginDialog(page) {
 
 async function selectMember(page, label, name) {
   await page.getByLabel(label, { exact: true }).fill(name);
-  await page.getByRole('button', { name: new RegExp(`${name}.*Select`, 'u') }).click();
+  await page.getByRole('button', { name: `Select ${name}`, exact: true }).click();
 }
 
 async function submitAndCapture(page, button) {
@@ -456,6 +456,15 @@ async function browserCase(engineName, engine, mobile, fixtures) {
       await navigate(page, route, heading);
       await assertNoOverflow(page, `${label}/${route}`);
     }
+    const skip = page.getByRole('link', { name: 'Skip to main content', exact: true });
+    await skip.focus();
+    await skip.press('Enter');
+    assert.equal(new URL(page.url()).hash, '#/about', 'Skip navigation changed the route.');
+    assert(
+      await page
+        .getByRole('main')
+        .evaluate((element) => element === globalThis.document.activeElement),
+    );
     await navigate(page, `entry/${fixtures.entry.id}`, 'Browser seed gathering');
     await page.getByText('Synthetic Park', { exact: true }).waitFor();
     await page.reload();
@@ -484,6 +493,23 @@ async function browserCase(engineName, engine, mobile, fixtures) {
     stage = 'single-entry';
     await page.goto(appUrl);
     await assertHeroMatchesApi(page);
+    const loginOpener = page
+      .locator('.gather-panel')
+      .getByRole('button', { name: 'Record entry', exact: true });
+    await loginOpener.focus();
+    await loginOpener.press('Enter');
+    await page.getByRole('dialog', { name: 'Step behind the bar' }).waitFor();
+    await loginDialog(page);
+    await page.getByRole('dialog', { name: 'Record entry', exact: true }).waitFor();
+    assert(await page.locator('.app-content').evaluate((element) => element.inert));
+    await page.keyboard.press('Escape');
+    await page.getByRole('dialog').waitFor({ state: 'hidden' });
+    await page.waitForFunction(() => globalThis.document.activeElement?.closest('.gather-panel'));
+    assert(
+      await loginOpener.evaluate((element) => globalThis.document.activeElement === element),
+      'Login/editor handoff lost the recording trigger.',
+    );
+    assert.equal(await page.evaluate(() => globalThis.document.body.style.overflow), '');
     await openRecord(page);
     await selectMember(page, 'Contributor / nickname', 'Browser Person 14');
     await page.getByLabel('Custom amount', { exact: true }).fill('2');
@@ -513,7 +539,9 @@ async function browserCase(engineName, engine, mobile, fixtures) {
     await page.keyboard.press('Escape');
     await dialog.waitFor({ state: 'hidden' });
     assert(
-      await keyboardOpener.evaluate((element) => globalThis.document.activeElement === element),
+      await keyboardOpener.evaluate(
+        (element) => globalThis.globalThis.document.activeElement === element,
+      ),
       'Closing the dialog did not restore focus to its opener.',
     );
 
@@ -643,6 +671,8 @@ async function browserCase(engineName, engine, mobile, fixtures) {
         'login',
         'single-entry',
         'keyboard-dialog-focus',
+        'login-editor-return-focus',
+        'skip-link-preserves-route',
         'exact-group-entry',
         'linked-partial-correction',
         'commit-response-loss',

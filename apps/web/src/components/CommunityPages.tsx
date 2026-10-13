@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import {
   fetchEntries,
   fetchOnThisDate,
@@ -23,7 +23,9 @@ import { ActivityFeed } from './ActivityFeed';
 import { ShareActions } from './ShareActions';
 
 function useResource<T>(loader: () => Promise<T>, key: string) {
-  const [state, setState] = useState<{ data: T | null; error: string | null }>({
+  const [attempt, setAttempt] = useState(0);
+  const [state, setState] = useState<{ key: string; data: T | null; error: string | null }>({
+    key,
     data: null,
     error: null,
   });
@@ -31,11 +33,12 @@ function useResource<T>(loader: () => Promise<T>, key: string) {
     let cancelled = false;
     void loader()
       .then((data) => {
-        if (!cancelled) setState({ data, error: null });
+        if (!cancelled) setState({ key, data, error: null });
       })
       .catch((caught: unknown) => {
         if (!cancelled)
           setState({
+            key,
             data: null,
             error: caught instanceof Error ? caught.message : 'Unable to load this page.',
           });
@@ -45,16 +48,30 @@ function useResource<T>(loader: () => Promise<T>, key: string) {
     };
     // The route key includes every query input; callers pass inline loaders.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key]);
-  return state;
+  }, [key, attempt]);
+  const retry = () => {
+    setState({ key, data: null, error: null });
+    setAttempt((value) => value + 1);
+  };
+  return { ...(state.key === key ? state : { data: null, error: null }), retry };
 }
-function PageStatus({ error }: { error: string | null }) {
+function PageStatus({
+  error,
+  onRetry,
+  pageTitle = false,
+}: {
+  error: string | null;
+  onRetry: () => void;
+  pageTitle?: boolean;
+}) {
   return (
-    <div className="page-status" role={error ? 'alert' : 'status'}>
-      <h2>{error ? 'This page could not be loaded' : 'Loading the shared ledger…'}</h2>
+    <div className="page-status" role={error ? 'alert' : 'status'} aria-atomic="true">
+      <h2 id={pageTitle ? 'page-title' : undefined} tabIndex={pageTitle ? -1 : undefined}>
+        {error ? 'This page could not be loaded' : 'Loading the shared ledger…'}
+      </h2>
       <p>{error ?? 'Retrieving saved records.'}</p>
       {error ? (
-        <button className="button button--outline" onClick={() => window.location.reload()}>
+        <button className="button button--outline" onClick={onRetry}>
           Try again
         </button>
       ) : null}
@@ -65,15 +82,30 @@ function PageHeading({
   eyebrow,
   title,
   children,
+  focusOnMount = false,
 }: {
   eyebrow: string;
   title: string;
   children?: React.ReactNode;
+  focusOnMount?: boolean;
 }) {
+  const heading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    if (!focusOnMount || document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+    const active = document.activeElement;
+    if (
+      !active ||
+      active === document.body ||
+      active.id === 'page-title' ||
+      active.id === 'main-content'
+    ) {
+      heading.current?.focus({ preventScroll: true });
+    }
+  }, [focusOnMount]);
   return (
     <div className="page-heading">
       <p className="eyebrow">{eyebrow}</p>
-      <h2 id="page-title" tabIndex={-1}>
+      <h2 id="page-title" ref={heading} tabIndex={-1}>
         {title}
       </h2>
       {children}
@@ -89,8 +121,9 @@ export function CrewPage({ query }: { query: string }) {
   const [error, setError] = useState('');
   const page = extra ?? result.data;
   const more = async () => {
-    if (!page?.nextCursor) return;
+    if (busy || !page?.nextCursor) return;
     setBusy(true);
+    setError('');
     try {
       const params = new URLSearchParams(query);
       params.set('cursor', page.nextCursor);
@@ -112,9 +145,11 @@ export function CrewPage({ query }: { query: string }) {
       </PageHeading>
       <form
         className="search-bar"
+        role="search"
+        aria-label="Crew directory"
         onSubmit={(event) => {
           event.preventDefault();
-          window.location.hash = `/crew?${new URLSearchParams({ q }).toString()}`;
+          window.location.hash = `/crew?${new URLSearchParams({ q: q.trim() }).toString()}`;
         }}
       >
         <label htmlFor="crew-search">Find a display name or alias</label>
@@ -129,9 +164,19 @@ export function CrewPage({ query }: { query: string }) {
           />
           <button className="button button--primary">Search crew</button>
         </div>
+        {search.get('q') ? (
+          <a className="text-button" href="#/crew">
+            Clear search
+          </a>
+        ) : null}
       </form>
       {page ? (
         <>
+          <p className="helper" role="status" aria-atomic="true">
+            {busy
+              ? 'Loading more members…'
+              : `${formatInteger(page.members.length)} public member${page.members.length === 1 ? '' : 's'} shown${page.nextCursor ? ' · More available' : ''}.`}
+          </p>
           <div className="crew-grid">
             {page.members.map((member) => (
               <a
@@ -161,16 +206,23 @@ export function CrewPage({ query }: { query: string }) {
               {busy ? 'Loading…' : 'Load more members'}
             </button>
           ) : null}
-          {error ? <p role="alert">{error}</p> : null}
+          {error ? (
+            <p className="form-error" role="alert">
+              {error}
+            </p>
+          ) : null}
         </>
       ) : (
-        <PageStatus error={result.error} />
+        <PageStatus error={result.error} onRetry={result.retry} />
       )}
     </>
   );
 }
 export function HistoryPage({ query, timezone }: { query: string; timezone: string }) {
   const params = new URLSearchParams(query);
+  const [from, setFrom] = useState(params.get('from') ?? '');
+  const [to, setTo] = useState(params.get('to') ?? '');
+  const invalidRange = Boolean(from && to && from > to);
   const result = useResource(() => fetchEntries(query), query);
   const [extra, setExtra] = useState<EntryPage | null>(null);
   const [busy, setBusy] = useState(false);
@@ -178,6 +230,7 @@ export function HistoryPage({ query, timezone }: { query: string; timezone: stri
   const page = extra ?? result.data;
   const search = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (invalidRange) return;
     const values = new FormData(event.currentTarget);
     const next = new URLSearchParams();
     for (const [name, value] of values)
@@ -185,8 +238,9 @@ export function HistoryPage({ query, timezone }: { query: string; timezone: stri
     window.location.hash = `/history?${next.toString()}`;
   };
   const more = async () => {
-    if (!page?.nextCursor) return;
+    if (busy || !page?.nextCursor) return;
     setBusy(true);
+    setError('');
     try {
       const nextParams = new URLSearchParams(query);
       nextParams.set('cursor', page.nextCursor);
@@ -206,7 +260,7 @@ export function HistoryPage({ query, timezone }: { query: string; timezone: stri
           occurrence dates appear only when supplied.
         </p>
       </PageHeading>
-      <form className="history-filters" onSubmit={search}>
+      <form className="history-filters" onSubmit={search} role="search" aria-label="Shared history">
         <label>
           Occasion or note
           <input
@@ -219,11 +273,26 @@ export function HistoryPage({ query, timezone }: { query: string; timezone: stri
         </label>
         <label>
           From
-          <input type="date" name="from" defaultValue={params.get('from') ?? ''} />
+          <input
+            type="date"
+            name="from"
+            value={from}
+            onChange={(event) => setFrom(event.target.value)}
+            aria-invalid={invalidRange || undefined}
+            aria-describedby={invalidRange ? 'history-date-error' : undefined}
+          />
         </label>
         <label>
           Through
-          <input type="date" name="to" defaultValue={params.get('to') ?? ''} />
+          <input
+            type="date"
+            name="to"
+            value={to}
+            min={from || undefined}
+            onChange={(event) => setTo(event.target.value)}
+            aria-invalid={invalidRange || undefined}
+            aria-describedby={invalidRange ? 'history-date-error' : undefined}
+          />
         </label>
         <label>
           Date means
@@ -252,6 +321,11 @@ export function HistoryPage({ query, timezone }: { query: string; timezone: stri
             Clear filters
           </a>
         </div>
+        {invalidRange ? (
+          <p className="form-error" id="history-date-error" role="alert">
+            Choose an end date on or after the start date.
+          </p>
+        ) : null}
       </form>
       {params.get('memberId') ? (
         <p className="notice">
@@ -262,6 +336,11 @@ export function HistoryPage({ query, timezone }: { query: string; timezone: stri
       ) : null}
       {page ? (
         <>
+          <p className="helper" role="status" aria-atomic="true">
+            {busy
+              ? 'Loading more records…'
+              : `${formatInteger(page.entries.length)} matching record${page.entries.length === 1 ? '' : 's'} shown${page.nextCursor ? ' · More available' : ''}.`}
+          </p>
           <ActivityFeed entries={page.entries} timezone={timezone} title="Matching records" />
           {page.nextCursor ? (
             <button
@@ -272,21 +351,25 @@ export function HistoryPage({ query, timezone }: { query: string; timezone: stri
               {busy ? 'Loading…' : 'Load more records'}
             </button>
           ) : null}
-          {error ? <p role="alert">{error}</p> : null}
+          {error ? (
+            <p className="form-error" role="alert">
+              {error}
+            </p>
+          ) : null}
         </>
       ) : (
-        <PageStatus error={result.error} />
+        <PageStatus error={result.error} onRetry={result.retry} />
       )}
     </>
   );
 }
 export function MemberPageView({ id, timezone }: { id: string; timezone: string }) {
   const result = useResource(() => fetchMember(id), id);
-  if (!result.data) return <PageStatus error={result.error} />;
+  if (!result.data) return <PageStatus error={result.error} onRetry={result.retry} pageTitle />;
   const { member, history } = result.data;
   return (
     <>
-      <PageHeading eyebrow="Crew member record" title={member.displayName}>
+      <PageHeading eyebrow="Crew member record" title={member.displayName} focusOnMount>
         <p>This display record is not an authenticated or verified personal account.</p>
       </PageHeading>
       <div className="metric-strip">
@@ -327,10 +410,11 @@ function MemoryEditor({
 }) {
   const [memory, setMemory] = useState<MemoryMetadata>(entry.memory ?? {});
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState('');
+  const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null);
   const save = async () => {
+    if (busy) return;
     setBusy(true);
-    setMessage('');
+    setMessage(null);
     try {
       const result = await updateMemory(
         entry.id,
@@ -339,9 +423,15 @@ function MemoryEditor({
         token,
       );
       onSaved(result.entry);
-      setMessage('Memory saved. Quantities and recording time are unchanged.');
+      setMessage({
+        text: 'Memory saved. Quantities and recording time are unchanged.',
+        error: false,
+      });
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : 'Memory could not be saved.');
+      setMessage({
+        text: caught instanceof Error ? caught.message : 'Memory could not be saved.',
+        error: true,
+      });
     } finally {
       setBusy(false);
     }
@@ -355,6 +445,7 @@ function MemoryEditor({
         the independently authorized project operator.
       </p>
       <form
+        aria-busy={busy}
         onSubmit={(event) => {
           event.preventDefault();
           void save();
@@ -367,9 +458,14 @@ function MemoryEditor({
                 ? 'Short note'
                 : field.charAt(0).toUpperCase() + field.slice(1)}
               <input
+                name={field}
                 maxLength={field === 'shortNote' ? 140 : 80}
                 value={memory[field] ?? ''}
-                onChange={(event) => setMemory({ ...memory, [field]: event.target.value })}
+                readOnly={busy}
+                onChange={(event) => {
+                  setMemory({ ...memory, [field]: event.target.value });
+                  setMessage(null);
+                }}
               />
             </label>
           ))}
@@ -378,11 +474,13 @@ function MemoryEditor({
           {busy ? 'Saving…' : 'Save memory details'}
         </button>
       </form>
-      {message ? (
-        <p className="helper" role="status">
-          {message}
-        </p>
-      ) : null}
+      <p
+        className={message?.error ? 'form-error' : 'helper'}
+        role={message?.error ? 'alert' : 'status'}
+        aria-atomic="true"
+      >
+        {busy ? 'Saving memory details…' : message?.text}
+      </p>
     </details>
   );
 }
@@ -401,7 +499,7 @@ export function EntryDetail({
 }) {
   const result = useResource(() => fetchEntry(id), id);
   const [edited, setEdited] = useState<BeerEntry | null>(null);
-  if (!result.data) return <PageStatus error={result.error} />;
+  if (!result.data) return <PageStatus error={result.error} onRetry={result.retry} pageTitle />;
   const entry = edited ?? result.data.entry;
   const { corrections } = result.data;
   const memory = entry.memory;
@@ -424,6 +522,7 @@ export function EntryDetail({
   return (
     <>
       <PageHeading
+        focusOnMount
         eyebrow={entry.isCorrection ? 'Append-only correction' : 'A saved record'}
         title={
           memory?.title ?? (entry.isGroup ? 'An occasion with the crew' : 'A moment in the ledger')
@@ -561,6 +660,8 @@ export function RecapsPage({ query, timezone }: { query: string; timezone: strin
   const period = new URLSearchParams(query).get('period') ?? current;
   const result = useResource(() => fetchRecap(period), period);
   const [input, setInput] = useState(period);
+  const [periodTouched, setPeriodTouched] = useState(false);
+  const validPeriod = /^[0-9]{4}(-(0[1-9]|1[0-2]))?$/u.test(input);
   const recap = result.data;
   return (
     <>
@@ -574,6 +675,8 @@ export function RecapsPage({ query, timezone }: { query: string; timezone: strin
         className="search-bar"
         onSubmit={(event) => {
           event.preventDefault();
+          setPeriodTouched(true);
+          if (!validPeriod) return;
           window.location.hash = `/recaps?period=${encodeURIComponent(input)}`;
         }}
       >
@@ -581,19 +684,35 @@ export function RecapsPage({ query, timezone }: { query: string; timezone: strin
         <div>
           <input
             id="recap-period"
-            pattern="[0-9]{4}(-[0-9]{2})?"
+            name="period"
+            pattern="[0-9]{4}(-(0[1-9]|1[0-2]))?"
+            placeholder="2026-10"
             value={input}
             onChange={(event) => setInput(event.target.value)}
+            onBlur={() => setPeriodTouched(true)}
+            aria-describedby={
+              periodTouched && !validPeriod ? 'recap-period-error' : 'recap-period-hint'
+            }
+            aria-invalid={(periodTouched && !validPeriod) || undefined}
             maxLength={7}
             required
           />
           <button className="button button--primary">View recap</button>
         </div>
+        {periodTouched && !validPeriod ? (
+          <p className="form-error" id="recap-period-error" role="alert">
+            Enter a year such as 2026, or a month such as 2026-10.
+          </p>
+        ) : (
+          <p className="helper" id="recap-period-hint">
+            Enter a year for an annual recap, or add a month for a closer look.
+          </p>
+        )}
       </form>
       {recap ? (
         <RecapContent recap={recap} timezone={timezone} />
       ) : (
-        <PageStatus error={result.error} />
+        <PageStatus error={result.error} onRetry={result.retry} />
       )}
     </>
   );
@@ -607,8 +726,9 @@ function OnThisDate({ timezone }: { timezone: string }) {
   const [error, setError] = useState('');
   const page = extra ?? result.data;
   const more = async () => {
-    if (!page?.nextCursor) return;
+    if (busy || !page?.nextCursor) return;
     setBusy(true);
+    setError('');
     try {
       const next = await fetchOnThisDate(
         new URLSearchParams({ monthDay: page.monthDay, cursor: page.nextCursor }).toString(),
@@ -622,8 +742,17 @@ function OnThisDate({ timezone }: { timezone: string }) {
   };
   if (!page)
     return result.error ? (
-      <p className="helper">On-this-date memories are temporarily unavailable.</p>
-    ) : null;
+      <div className="notice">
+        <p role="alert">On-this-date memories are temporarily unavailable.</p>
+        <button className="button button--quiet" onClick={result.retry}>
+          Try loading memories again
+        </button>
+      </div>
+    ) : (
+      <p className="helper" role="status">
+        Loading on-this-date memories…
+      </p>
+    );
   return (
     <section className="on-this-date">
       <div className="section-heading">
@@ -635,6 +764,11 @@ function OnThisDate({ timezone }: { timezone: string }) {
       <p className="helper">
         Only independently supplied occurrence dates are included. Unknown historical dates are
         never inferred from recording time.
+      </p>
+      <p className="helper" role="status" aria-atomic="true">
+        {busy
+          ? 'Loading more memories…'
+          : `${formatInteger(page.entries.length)} memor${page.entries.length === 1 ? 'y' : 'ies'} shown${page.nextCursor ? ' · More available' : ''}.`}
       </p>
       {page.entries.length ? (
         <ActivityFeed
@@ -816,9 +950,18 @@ export function MilestoneHistory({ revision }: { revision: number }) {
           <p className="helper">No recorded day has closed at the first milestone yet.</p>
         )
       ) : (
-        <p className="helper" role={result.error ? 'alert' : 'status'}>
-          {result.error ? 'Milestone history could not be loaded.' : 'Loading recorded milestones…'}
-        </p>
+        <>
+          <p className="helper" role={result.error ? 'alert' : 'status'}>
+            {result.error
+              ? 'Milestone history could not be loaded.'
+              : 'Loading recorded milestones…'}
+          </p>
+          {result.error ? (
+            <button className="button button--quiet" onClick={result.retry}>
+              Try loading milestones again
+            </button>
+          ) : null}
+        </>
       )}
     </section>
   );

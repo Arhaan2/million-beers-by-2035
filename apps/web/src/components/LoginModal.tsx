@@ -34,13 +34,16 @@ export function LoginModal({
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const inFlight = useRef(false);
 
   useEffect(() => {
     if (!open) return;
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const timer = window.setTimeout(() => inputRef.current?.focus(), 0);
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    inputRef.current?.focus();
     return () => {
-      window.clearTimeout(timer);
+      document.body.style.overflow = previousOverflow;
       previous?.focus();
     };
   }, [open]);
@@ -55,7 +58,8 @@ export function LoginModal({
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!code) return;
+    if (!code || inFlight.current) return;
+    inFlight.current = true;
     setSubmitting(true);
     setError(null);
     try {
@@ -66,9 +70,11 @@ export function LoginModal({
           ? 'Too many attempts. Please wait before trying again.'
           : 'That crew code was not accepted.',
       );
+      inputRef.current?.focus();
     } finally {
       setCode('');
       setSubmitting(false);
+      inFlight.current = false;
     }
   };
 
@@ -85,6 +91,7 @@ export function LoginModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="login-title"
+        aria-describedby="login-intro"
         onKeyDown={(event) => {
           if (event.key === 'Escape' && !submitting) close();
           trapFocus(event);
@@ -101,10 +108,10 @@ export function LoginModal({
         </button>
         <p className="eyebrow">Crew access</p>
         <h2 id="login-title">Step behind the bar</h2>
-        <p className="modal__intro">
+        <p className="modal__intro" id="login-intro">
           Enter the shared crew code to record an update or correction.
         </p>
-        <form onSubmit={(event) => void submit(event)}>
+        <form onSubmit={(event) => void submit(event)} aria-busy={submitting}>
           <label htmlFor="crew-code">Crew code</label>
           <input
             ref={inputRef}
@@ -112,8 +119,14 @@ export function LoginModal({
             type="password"
             autoComplete="one-time-code"
             maxLength={64}
+            required
+            readOnly={submitting}
             value={code}
-            onChange={(event) => setCode(event.target.value)}
+            onChange={(event) => {
+              setCode(event.target.value);
+              setError(null);
+            }}
+            aria-invalid={Boolean(error)}
             aria-describedby={error ? 'login-error' : undefined}
           />
           {error ? (
@@ -126,7 +139,7 @@ export function LoginModal({
           </button>
         </form>
         <p className="modal__privacy">
-          The code is sent only to the Worker for validation and is never stored in this browser.
+          Your crew code is checked when you sign in and never saved on this device.
         </p>
       </div>
     </div>

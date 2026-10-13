@@ -20,7 +20,7 @@ export function Countdown({ deadlineAt }: { deadlineAt: string }) {
   return (
     <section className="countdown" aria-label="Time remaining until January 1, 2035">
       <p className="countdown__label">Time left on the board</p>
-      <div className="countdown__units">
+      <div className="countdown__units" role="timer" aria-live="off" aria-label="Time remaining">
         {units.map(([label, amount]) => (
           <div key={label}>
             <strong>

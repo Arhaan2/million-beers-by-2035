@@ -102,9 +102,11 @@ describe('UpdateModal group mode', () => {
     await enterGroupNames(user);
     await user.type(screen.getByLabelText('Shared note (optional)'), 'Friday night hangout');
     await user.click(screen.getByRole('button', { name: 'Review group entry' }));
+    expect(screen.getByRole('heading', { name: 'Review group entry' })).toHaveFocus();
     expect(screen.getByText('Record 2 beers across 2 people?')).toBeInTheDocument();
     expect(screen.getByText('Friday night hangout')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Back to edit' }));
+    expect(screen.getByRole('heading', { name: 'Record entry' })).toHaveFocus();
     expect(screen.getByLabelText('Person 1')).toHaveValue('Arhaan');
     expect(screen.getByLabelText('Shared note (optional)')).toHaveValue('Friday night hangout');
   });
@@ -127,6 +129,34 @@ describe('UpdateModal group mode', () => {
       ],
       note: 'Duplicate group entry',
     });
+  });
+
+  it('reviews a single-person correction in the dialog before recording it', async () => {
+    const { submit, user } = setup();
+    await user.click(screen.getByRole('button', { name: '+4' }));
+    expect(screen.getByRole('button', { name: '+4' })).toHaveAttribute('aria-pressed', 'true');
+    await user.click(screen.getByLabelText(/Correction mode/u));
+    await user.type(screen.getByLabelText('Correction reason'), 'Duplicate entry');
+    await user.click(screen.getByRole('button', { name: 'Review correction of -4' }));
+    expect(screen.getByText('Record a correction of 4 beers?')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Review correction' })).toHaveFocus();
+    expect(submit).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Confirm correction' }));
+    await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+    expect(submit.mock.calls[0]?.[0]).toMatchObject({
+      totalAmount: -4,
+      allocations: [{ contributor: '', amount: -4 }],
+      note: 'Duplicate entry',
+    });
+  });
+
+  it('keeps keyboard focus in the participant list when removing the first row', async () => {
+    const { user } = setup();
+    await user.click(screen.getByRole('button', { name: 'Split between people' }));
+    await user.click(screen.getByRole('button', { name: 'Add person' }));
+    const nextPerson = screen.getByLabelText('Person 2');
+    await user.click(screen.getByRole('button', { name: 'Remove participant 1' }));
+    await waitFor(() => expect(nextPerson).toHaveFocus());
   });
 
   it('retains the same idempotency key after an uncertain failure and preserves the form', async () => {

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 export interface ShareCardData {
   title: string;
   subtitle: string;
@@ -84,6 +84,66 @@ export function ShareActions({ data }: { data: ShareCardData }) {
   const [includeNames, setIncludeNames] = useState(false);
   const [message, setMessage] = useState('');
   const [fallback, setFallback] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [copying, setCopying] = useState(false);
+  const [sharing, setSharing] = useState(false);
+  const linkRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (fallback) linkRef.current?.focus();
+  }, [fallback]);
+
+  const showCopyFallback = (detail: string) => {
+    setFallback(true);
+    setMessage(detail);
+    linkRef.current?.focus();
+    linkRef.current?.select();
+  };
+
+  const download = async () => {
+    setExporting(true);
+    setMessage('Preparing image…');
+    try {
+      await exportCard(data, includeNames);
+      setMessage('Image downloaded.');
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : 'Image export failed.');
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const copyLink = async () => {
+    setCopying(true);
+    setMessage('Copying link…');
+    try {
+      await navigator.clipboard.writeText(data.url);
+      setFallback(false);
+      setMessage('Link copied.');
+    } catch {
+      showCopyFallback('Copy the selected link below.');
+    } finally {
+      setCopying(false);
+    }
+  };
+
+  const share = async () => {
+    setSharing(true);
+    setMessage('Opening share sheet…');
+    try {
+      await navigator.share({ title: data.title, url: data.url });
+      setMessage('Shared.');
+    } catch (caught) {
+      if (caught instanceof DOMException && caught.name === 'AbortError') {
+        setMessage('Sharing canceled.');
+      } else {
+        showCopyFallback('Sharing unavailable. Copy the selected link below.');
+      }
+    } finally {
+      setSharing(false);
+    }
+  };
+
   return (
     <section className="share-actions" aria-label="Share this saved record">
       <p className="helper">
@@ -102,48 +162,32 @@ export function ShareActions({ data }: { data: ShareCardData }) {
       ) : null}
       <div className="button-row">
         <button
+          type="button"
           className="button button--outline"
-          onClick={() =>
-            void exportCard(data, includeNames)
-              .then(() => setMessage('Image downloaded.'))
-              .catch((caught: unknown) =>
-                setMessage(caught instanceof Error ? caught.message : 'Image export failed.'),
-              )
-          }
+          disabled={exporting}
+          aria-busy={exporting}
+          onClick={() => void download()}
         >
-          Download image card
+          {exporting ? 'Preparing image…' : 'Download image card'}
         </button>
         <button
+          type="button"
           className="button button--quiet"
-          onClick={() =>
-            void (async () => {
-              try {
-                await navigator.clipboard.writeText(data.url);
-                setMessage('Link copied.');
-              } catch {
-                setFallback(true);
-                setMessage('Copy the link below.');
-              }
-            })()
-          }
+          disabled={copying}
+          aria-busy={copying}
+          onClick={() => void copyLink()}
         >
-          Copy link
+          {copying ? 'Copying…' : 'Copy link'}
         </button>
         {typeof navigator.share === 'function' ? (
           <button
+            type="button"
             className="button button--quiet"
-            onClick={() =>
-              void navigator
-                .share({ title: data.title, url: data.url })
-                .catch((caught: unknown) => {
-                  if (!(caught instanceof DOMException && caught.name === 'AbortError')) {
-                    setFallback(true);
-                    setMessage('Sharing unavailable. Copy the link below.');
-                  }
-                })
-            }
+            disabled={sharing}
+            aria-busy={sharing}
+            onClick={() => void share()}
           >
-            Share…
+            {sharing ? 'Sharing…' : 'Share…'}
           </button>
         ) : null}
       </div>
@@ -152,17 +196,16 @@ export function ShareActions({ data }: { data: ShareCardData }) {
           Public link
           <input
             className="public-link"
+            ref={linkRef}
             value={data.url}
             readOnly
             onFocus={(event) => event.target.select()}
           />
         </label>
       ) : null}
-      {message ? (
-        <p role="status" className="helper">
-          {message}
-        </p>
-      ) : null}
+      <p role="status" aria-atomic="true" className="helper share-actions__status">
+        {message}
+      </p>
     </section>
   );
 }
