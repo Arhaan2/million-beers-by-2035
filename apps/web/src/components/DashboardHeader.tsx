@@ -17,7 +17,7 @@ export function DashboardHeader({
 }: Props) {
   return (
     <header className="site-header">
-      <div className="brand-lockup">
+      <a className="brand-lockup" href="#/" aria-label="The Million Beer Project dashboard">
         <div className="mug-mark" aria-hidden="true">
           <svg viewBox="0 0 48 48" role="img">
             <path d="M9 14h25v26H15a6 6 0 0 1-6-6V14Z" />
@@ -27,11 +27,10 @@ export function DashboardHeader({
           </svg>
         </div>
         <div>
-          <p className="eyebrow">One crew · one impossible number</p>
           <h1>The Million Beer Project</h1>
           <p className="subtitle">One crew. One impossible number. By 2035.</p>
         </div>
-      </div>
+      </a>
       <div className="header-actions">
         <p className={`connection ${degraded ? 'connection--degraded' : ''}`} role="status">
           <span aria-hidden="true" />

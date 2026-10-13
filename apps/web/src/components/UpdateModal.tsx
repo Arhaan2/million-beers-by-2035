@@ -100,6 +100,8 @@ export function UpdateModal({
   const [groups, setGroups] = useState(readGroups);
   const firstButton = useRef<HTMLButtonElement>(null);
   const reviewHeading = useRef<HTMLHeadingElement>(null);
+  const editHeading = useRef<HTMLHeadingElement>(null);
+  const wasReviewing = useRef(false);
   const inputs = useRef(new Map<string, HTMLInputElement>());
   const inFlight = useRef(false);
   const { mode, amount, groupTotal, participants, contributor, note, correction } = form;
@@ -113,18 +115,20 @@ export function UpdateModal({
   useEffect(() => {
     if (!open) return;
     const returnTo = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const timer = window.setTimeout(() => firstButton.current?.focus(), 0);
+    firstButton.current?.focus();
     const previous = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => {
-      window.clearTimeout(timer);
       document.body.style.overflow = previous;
       returnTo?.focus();
     };
   }, [open]);
   useEffect(() => {
+    if (!open) return;
     if (reviewing || attempt) reviewHeading.current?.focus();
-  }, [reviewing, attempt]);
+    else if (wasReviewing.current) editHeading.current?.focus();
+    wasReviewing.current = Boolean(reviewing || attempt);
+  }, [reviewing, attempt, open]);
   useEffect(() => {
     if (!open || attempt) return;
     let current = true;
@@ -320,7 +324,16 @@ export function UpdateModal({
       setError('Select a member from the directory or intentionally create this name first.');
       return;
     }
-    if (correction && !window.confirm(`Record a correction of -${amount} beers?`)) return;
+    if (correction) {
+      try {
+        buildPayload();
+        setReviewing(true);
+        setError(null);
+      } catch (caught) {
+        setError(caught instanceof Error ? caught.message : 'Check the occurrence date.');
+      }
+      return;
+    }
     void submitPayload();
   };
   const reviewGroup = () => {
@@ -377,7 +390,7 @@ export function UpdateModal({
         >
           ×
         </button>
-        <p className="eyebrow">Append to the ledger</p>
+        <p className="eyebrow">Crew ledger</p>
         {reviewing || attempt ? (
           <div className="entry-review">
             <h2 id="update-title" ref={reviewHeading} tabIndex={-1}>
@@ -385,14 +398,18 @@ export function UpdateModal({
                 ? submitting
                   ? 'Recording entry…'
                   : 'Resolve saved submission'
-                : 'Review group entry'}
+                : correction
+                  ? 'Review correction'
+                  : 'Review group entry'}
             </h2>
             <p className="entry-review__question">
-              {correction
+              {correction && mode === 'group'
                 ? `Record a correction of ${groupTotal} beers across ${participants.length} people?`
-                : mode === 'group'
-                  ? `Record ${groupTotal} beers across ${participants.length} people?`
-                  : `Record ${amount} beer${amount === 1 ? '' : 's'}?`}
+                : correction
+                  ? `Record a correction of ${amount} beer${amount === 1 ? '' : 's'}?`
+                  : mode === 'group'
+                    ? `Record ${groupTotal} beers across ${participants.length} people?`
+                    : `Record ${amount} beer${amount === 1 ? '' : 's'}?`}
             </p>
             <ul className="entry-review__allocations">
               {(attempt?.payload.allocations ?? buildPayload().allocations).map((item, index) => (
@@ -420,10 +437,10 @@ export function UpdateModal({
             {attempt ? (
               <p className="notice" role="status">
                 {submitting
-                  ? 'Your exact payload and retry key are saved before sending.'
+                  ? 'Your entry is saved on this device while we record it.'
                   : attempt.state === 'auth'
-                    ? 'Sign in again, then retry this saved attempt. Its original payload and key are preserved.'
-                    : 'Submission status is unknown. The form is locked to its original payload and key. Checking it again cannot create a duplicate.'}
+                    ? 'Sign in again, then retry this saved attempt. Your entry is preserved.'
+                    : 'We could not confirm whether this entry was recorded. Retry the saved entry to check safely without creating a duplicate.'}
               </p>
             ) : (
               <p className="helper">
@@ -462,7 +479,7 @@ export function UpdateModal({
           </div>
         ) : (
           <>
-            <h2 id="update-title">
+            <h2 id="update-title" ref={editHeading} tabIndex={-1}>
               {linked ? 'Correct this entry' : correction ? 'Record a correction' : 'Record entry'}
             </h2>
             {initialCorrection && form.correctionOfEntryId !== initialCorrection.id ? (
@@ -473,8 +490,8 @@ export function UpdateModal({
             ) : null}
             {linked ? (
               <p className="helper">
-                A linked reversal appends a new record. Enter zero to leave a participant unchanged.
-                The server checks each remaining allowance atomically.
+                This correction creates a separate record in your history. Enter zero to leave a
+                participant unchanged, or choose an amount up to their remaining allowance.
               </p>
             ) : (
               <fieldset className="entry-mode" aria-label="Entry type">
@@ -516,9 +533,11 @@ export function UpdateModal({
                           key={value}
                           type="button"
                           className={amount === value ? 'selected' : ''}
+                          aria-pressed={amount === value}
                           onClick={() => patch({ amount: value })}
                         >
-                          +{value}
+                          {correction ? '−' : '+'}
+                          {value}
                         </button>
                       ))}
                     </div>
@@ -533,6 +552,7 @@ export function UpdateModal({
                         min="1"
                         max="250"
                         step="1"
+                        required
                         value={amount}
                         onChange={(event) => patch({ amount: Number(event.target.value) })}
                       />
@@ -589,6 +609,7 @@ export function UpdateModal({
                         min="1"
                         max="250"
                         step="1"
+                        required
                         value={groupTotal}
                         disabled={linked}
                         onChange={(event) => patch({ groupTotal: Number(event.target.value) })}
@@ -652,6 +673,7 @@ export function UpdateModal({
                               min={linked ? 0 : 1}
                               max={participant.maximum ?? 250}
                               step="1"
+                              required
                               value={participant.amount}
                               onChange={(event) =>
                                 updatePerson(participant.id, { amount: Number(event.target.value) })
@@ -670,7 +692,8 @@ export function UpdateModal({
                                     (item) => item.id !== participant.id,
                                   ),
                                 });
-                                const target = participants[index - 1]?.id;
+                                const target =
+                                  participants[index - 1]?.id ?? participants[index + 1]?.id;
                                 window.setTimeout(
                                   () => target && inputs.current.get(target)?.focus(),
                                   0,
@@ -744,6 +767,9 @@ export function UpdateModal({
               <textarea
                 id="entry-note"
                 maxLength={140}
+                minLength={correction ? 4 : undefined}
+                required={correction}
+                aria-describedby={correction ? 'note-count correction-help' : 'note-count'}
                 rows={2}
                 value={note}
                 placeholder={
@@ -751,7 +777,14 @@ export function UpdateModal({
                 }
                 onChange={(event) => patch({ note: event.target.value })}
               />
-              <div className="form-meta">{note.length}/140</div>
+              <div className="form-meta" id="note-count">
+                {note.length}/140 characters
+              </div>
+              {correction ? (
+                <p className="helper" id="correction-help">
+                  Add a reason with at least 4 characters.
+                </p>
+              ) : null}
               {!correction && (capabilities?.enhancedLogging || capabilities?.occurrence) ? (
                 <details className="enrichment">
                   <summary>Add a memory or occurrence date</summary>

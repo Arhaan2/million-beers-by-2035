@@ -1,10 +1,10 @@
 import { useId, useState } from 'react';
-import { formatTimestamp, relativeTime } from '../lib/format';
+import { formatInteger, formatTimestamp, relativeTime } from '../lib/format';
 import type { BeerEntry } from '../lib/types';
 import { EmptyState } from './EmptyState';
 
 function signedAmount(amount: number): string {
-  return `${amount > 0 ? '+' : '−'}${Math.abs(amount)}`;
+  return `${amount > 0 ? '+' : amount < 0 ? '−' : ''}${formatInteger(Math.abs(amount))}`;
 }
 
 export function ActivityFeed({
@@ -40,14 +40,16 @@ export function ActivityFeed({
       {entries.length === 0 ? (
         <EmptyState
           title="The first round is waiting"
-          detail="Crew updates will appear here as an append-only record."
+          detail="Saved crew updates will appear here, with every round and correction kept in the record."
         />
       ) : (
         <ol className="activity-list">
           {entries.map((entry) => {
             const isExpanded = expanded.has(entry.id);
             const allocationId = `${feedId}-allocations-${entry.id}`;
+            const entryHeadingId = `${feedId}-entry-${entry.id}`;
             const singleAllocation = entry.allocations[0];
+            const recordedAt = formatTimestamp(entry.createdAt, timezone);
             return (
               <li key={entry.id} className={entry.isGroup ? 'activity-entry--group' : ''}>
                 <span
@@ -57,7 +59,7 @@ export function ActivityFeed({
                   <span className="sr-only"> {entry.isCorrection ? 'correction' : 'added'}</span>
                 </span>
                 <div className="activity-entry__body">
-                  <strong>
+                  <strong id={entryHeadingId}>
                     {entry.memory?.title ??
                       (entry.isGroup
                         ? `${entry.allocations.length} people`
@@ -80,8 +82,12 @@ export function ActivityFeed({
                       {entry.memory.city ? ` · ${entry.memory.city}` : ''}
                     </p>
                   ) : null}
-                  <a className="entry-detail-link" href={`#/entry/${encodeURIComponent(entry.id)}`}>
-                    View record <span aria-hidden="true">↗</span>
+                  <a
+                    className="entry-detail-link"
+                    href={`#/entry/${encodeURIComponent(entry.id)}`}
+                    aria-describedby={entryHeadingId}
+                  >
+                    View record <span aria-hidden="true">→</span>
                   </a>
                   {entry.isGroup ? (
                     <>
@@ -90,6 +96,7 @@ export function ActivityFeed({
                         type="button"
                         aria-expanded={isExpanded}
                         aria-controls={allocationId}
+                        aria-describedby={entryHeadingId}
                         onClick={() => toggleEntry(entry.id)}
                       >
                         {isExpanded ? 'Hide allocations' : 'Show allocations'}
@@ -109,7 +116,8 @@ export function ActivityFeed({
                 </div>
                 <time
                   dateTime={new Date(entry.createdAt).toISOString()}
-                  title={formatTimestamp(entry.createdAt, timezone)}
+                  title={recordedAt}
+                  aria-label={`Recorded ${recordedAt}`}
                 >
                   {relativeTime(entry.createdAt)}
                 </time>

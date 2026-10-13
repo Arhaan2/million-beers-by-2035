@@ -3,12 +3,13 @@ import type { LeaderboardEntry } from '../lib/types';
 import { EmptyState } from './EmptyState';
 
 export function Leaderboard({ entries }: { entries: LeaderboardEntry[] }) {
+  const headingId = useId();
   return (
-    <section className="panel" aria-labelledby="leaderboard-heading">
+    <section className="panel" aria-labelledby={headingId}>
       <div className="panel__heading">
         <div>
-          <p className="eyebrow">Net recorded</p>
-          <h2 id="leaderboard-heading">Crew board</h2>
+          <p className="eyebrow">Net beers recorded</p>
+          <h2 id={headingId}>Crew board</h2>
         </div>
       </div>
       {entries.length === 0 ? (
@@ -20,12 +21,19 @@ export function Leaderboard({ entries }: { entries: LeaderboardEntry[] }) {
         <ol className="leaderboard">
           {entries.map((entry, index) => (
             <li key={entry.contributor}>
-              <span className="rank">{String(index + 1).padStart(2, '0')}</span>
+              <span className="rank" aria-hidden="true">
+                {String(index + 1).padStart(2, '0')}
+              </span>
               <div>
                 <strong>{entry.contributor}</strong>
-                <small>{formatInteger(entry.eventCount)} updates</small>
+                <small>
+                  {formatInteger(entry.eventCount)} {entry.eventCount === 1 ? 'update' : 'updates'}
+                </small>
               </div>
-              <b>{formatInteger(entry.netTotal)}</b>
+              <b>
+                {formatInteger(entry.netTotal)}
+                <span className="sr-only"> beers</span>
+              </b>
             </li>
           ))}
         </ol>
@@ -33,3 +41,4 @@ export function Leaderboard({ entries }: { entries: LeaderboardEntry[] }) {
     </section>
   );
 }
+import { useId } from 'react';
