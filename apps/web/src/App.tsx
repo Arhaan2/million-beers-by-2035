@@ -338,13 +338,13 @@ function App() {
                     Add memory
                   </a>
                 ) : null}
+                <a
+                  className="button button--quiet"
+                  href={`#/entry/${encodeURIComponent(receipt.entryId)}?share=1`}
+                >
+                  Share saved entry
+                </a>
               </div>
-              <a
-                className="text-button"
-                href={`#/entry/${encodeURIComponent(receipt.entryId)}?share=1`}
-              >
-                Share saved entry
-              </a>
             </section>
           ) : null}
           {degraded && summary ? (

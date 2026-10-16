@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -340,7 +340,11 @@ describe('community page feedback', () => {
     await user.click(await screen.findByText('Edit public memory details'));
     await user.type(screen.getByLabelText('City'), 'Portland');
     await user.click(screen.getByRole('button', { name: 'Save memory details' }));
-    expect(await screen.findByText('Seattle')).toBeInTheDocument();
+    expect(
+      within(await screen.findByRole('region', { name: 'Latest saved memory' })).getByText(
+        'Seattle',
+      ),
+    ).toBeInTheDocument();
     expect(screen.getByLabelText('City')).toHaveValue('Portland');
     expect(screen.getByRole('button', { name: 'Save memory details' })).toBeDisabled();
     await user.click(screen.getByRole('button', { name: 'Keep my draft for review' }));
@@ -569,4 +573,73 @@ describe('community page feedback', () => {
     expect(screen.getByLabelText('Title')).toHaveValue('');
     expect(screen.getByLabelText('City')).toHaveValue('Draft city');
   });
+  it('does not retain a saved field as a draft after its edit is reverted', async () => {
+    const props = { token: 'token', onSaved: vi.fn(), onLogin: vi.fn(), initiallyOpen: true };
+    const view = render(<MemoryEditor {...props} entry={entry} />);
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText('Title'), 'x');
+    await user.keyboard('{Backspace}');
+    expect(screen.getByLabelText('Title')).toHaveValue('Friday catch-up');
+    view.rerender(<MemoryEditor {...props} entry={{ ...entry, memory: null }} />);
+    expect(screen.getByLabelText('Title')).toHaveValue('');
+  });
+  it.each([409, 0])(
+    'applies a same-version privacy projection first discovered during reconciliation (%i)',
+    async (status) => {
+      const original = {
+        ...entry,
+        memory: { title: 'Original public title', venue: 'Old public place' },
+      };
+      const correction = {
+        ...entry,
+        id: 'correction',
+        isCorrection: true,
+        note: 'Original correction note',
+        memory: null,
+      };
+      const hidden = {
+        ...original,
+        memory: null,
+        note: null,
+        allocations: [
+          { id: 'allocation-1', memberId: null, contributor: 'Private member', amount: 2 },
+        ],
+      };
+      vi.mocked(fetchEntry)
+        .mockResolvedValueOnce({ entry: original, corrections: [correction] })
+        .mockResolvedValue({
+          entry: hidden,
+          corrections: [{ ...correction, note: null, allocations: hidden.allocations }],
+        });
+      vi.mocked(updateMemory).mockRejectedValueOnce(
+        new ApiRequestError('Save not confirmed.', status, status === 0),
+      );
+      const props = {
+        id: entry.id,
+        timezone: 'UTC',
+        token: 'token',
+        capabilities: { metadataEditing: true } as Capabilities,
+        onCorrect: () => undefined,
+      };
+      const view = render(<EntryDetail {...props} resourceRevision={0} />);
+      const user = userEvent.setup();
+      await user.click(await screen.findByText('Edit public memory details'));
+      await user.type(screen.getByLabelText('City'), 'Draft city');
+      await user.click(screen.getByRole('button', { name: 'Save memory details' }));
+      await screen.findByRole('region', { name: 'Latest saved memory' });
+      expect(screen.getByLabelText('Title')).toHaveValue('');
+      expect(screen.getByLabelText('Venue')).toHaveValue('');
+      expect(screen.getByLabelText('City')).toHaveValue('Draft city');
+      expect(screen.queryByText('Original public title')).not.toBeInTheDocument();
+      expect(screen.queryByText('Original correction note')).not.toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'Use latest saved details' }));
+      view.rerender(<EntryDetail {...props} resourceRevision={1} />);
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(screen.getByLabelText('Title')).toHaveValue('');
+      expect(screen.getByLabelText('City')).toHaveValue('');
+      expect(screen.queryByText('Original public title')).not.toBeInTheDocument();
+    },
+  );
 });

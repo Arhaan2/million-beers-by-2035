@@ -285,6 +285,35 @@ async function seed() {
   return { members, entry: saved.entry };
 }
 
+// Additional release fixtures exercise bounded export over more than one API page.
+const archiveNeedle = 'Synthetic archive portability fixture';
+async function seedArchiveFixtures() {
+  const session = await localJson('/api/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: webOrigin },
+    body: JSON.stringify({ code: crewCode }),
+  });
+  const ids = [];
+  for (let index = 0; index < 55; index += 1) {
+    const result = await localJson('/api/entries', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${session.token}`,
+        'Content-Type': 'application/json',
+        Origin: webOrigin,
+      },
+      body: JSON.stringify({
+        totalAmount: 1,
+        allocations: [{ contributor: '', amount: 1 }],
+        note: `${archiveNeedle} ${index}`,
+        idempotencyKey: crypto.randomUUID(),
+      }),
+    });
+    ids.push(result.entry.id);
+  }
+  return ids;
+}
+
 async function navigate(page, route, heading) {
   await page.goto(`${appUrl}#/${route}`);
   await page.getByRole('heading', { name: heading, exact: true }).waitFor();
@@ -349,6 +378,279 @@ async function assertHeroMatchesApi(page) {
   return summary;
 }
 
+async function verifyRecordingAndArchive({
+  page,
+  context,
+  label,
+  fixtures,
+  correctedGroup,
+  screenshot,
+  setStage,
+}) {
+  const before = await localJson('/api/summary');
+  setStage('contextual-member');
+  const member = fixtures.members[13];
+  const memberBefore = await localJson(`/api/members/${member.id}`);
+  await navigate(page, `member/${member.id}`, member.displayName);
+  await page.getByRole('button', { name: 'Record for this member', exact: true }).click();
+  assert.equal(
+    await page.getByLabel('Contributor / nickname', { exact: true }).inputValue(),
+    member.displayName,
+  );
+  assert.equal(await page.getByLabel('Custom amount', { exact: true }).inputValue(), '1');
+  await page
+    .getByRole('button', {
+      name: `Remember ${member.displayName} as the default person`,
+      exact: true,
+    })
+    .click();
+  const memberEntry = await submitAndCapture(page, 'Record +1 beers');
+  await page.waitForFunction(
+    (expected) =>
+      globalThis.document.querySelector('.metric-strip strong')?.textContent === String(expected),
+    memberBefore.member.participationCount + 1,
+  );
+  assert.equal(new URL(page.url()).hash, `#/member/${member.id}`);
+  assert.equal(
+    await page.getByRole('link', { name: 'View saved entry', exact: true }).getAttribute('href'),
+    `#/entry/${memberEntry.entry.id}`,
+  );
+
+  setStage('member-session-expiry');
+  let memberRequests = 0;
+  await context.route(`${apiOrigin}/api/members`, async (route) => {
+    if (route.request().method() !== 'POST') {
+      await route.fallback();
+      return;
+    }
+    memberRequests += 1;
+    if (memberRequests === 1) {
+      const response = await route.fetch({
+        headers: {
+          ...route.request().headers(),
+          authorization: 'Bearer expired-synthetic-session',
+        },
+        maxRedirects: 0,
+      });
+      assert.equal(response.status(), 401);
+      await route.fulfill({ response });
+    } else await route.fallback();
+  });
+  await openRecord(page);
+  assert.equal(
+    await page.getByLabel('Contributor / nickname', { exact: true }).inputValue(),
+    member.displayName,
+  );
+  await page.getByRole('button', { name: 'Reset default person', exact: true }).click();
+  const newName = `New ${label}`;
+  await page.getByLabel('Contributor / nickname', { exact: true }).fill(newName);
+  await page.getByRole('button', { name: `Create “${newName}” as a member`, exact: true }).click();
+  await page.getByRole('dialog', { name: 'Step behind the bar', exact: true }).waitFor();
+  await loginDialog(page);
+  assert.equal(memberRequests, 1, 'Login automatically retried member creation.');
+  assert.equal(
+    await page.getByLabel('Contributor / nickname', { exact: true }).inputValue(),
+    newName,
+  );
+  await page.getByRole('button', { name: 'Find in the full crew directory', exact: true }).click();
+  const createdResponse = page.waitForResponse(
+    (response) =>
+      response.url() === `${apiOrigin}/api/members` &&
+      response.request().method() === 'POST' &&
+      response.status() === 201,
+  );
+  await page.getByRole('button', { name: `Create “${newName}” as a member`, exact: true }).click();
+  const createdMember = (await (await createdResponse).json()).member;
+  await page.getByRole('button', { name: 'Member selected · change', exact: true }).waitFor();
+  const createdEntry = await submitAndCapture(page, 'Record +1 beers');
+  assert.equal(createdEntry.entry.allocations[0].memberId, createdMember.id);
+  await context.unroute(`${apiOrigin}/api/members`);
+
+  setStage('contextual-group-and-templates');
+  await navigate(page, `entry/${fixtures.entry.id}`, 'Browser seed gathering');
+  await page.getByRole('button', { name: 'Use these people', exact: true }).click();
+  assert.equal(
+    await page.getByLabel('Person 1', { exact: true }).inputValue(),
+    fixtures.members[0].displayName,
+  );
+  assert.equal(
+    await page.getByLabel('Person 2', { exact: true }).inputValue(),
+    fixtures.members[14].displayName,
+  );
+  assert.equal(await page.getByLabel('Total beers', { exact: true }).inputValue(), '2');
+  assert.equal(
+    await page.getByLabel('Beer allocation for participant 1', { exact: true }).inputValue(),
+    '1',
+  );
+  assert.equal(
+    await page.getByLabel('Beer allocation for participant 2', { exact: true }).inputValue(),
+    '1',
+  );
+  assert.equal(await page.getByLabel('Shared note (optional)', { exact: true }).inputValue(), '');
+  await page.getByRole('button', { name: 'Save these people as a group', exact: true }).click();
+  await page.getByLabel('Group name', { exact: true }).fill('Synthetic friends');
+  await page.getByLabel('Group name', { exact: true }).press('Enter');
+  await page.getByRole('button', { name: 'Rename group Synthetic friends', exact: true }).click();
+  await page.getByLabel('Group name', { exact: true }).fill('Synthetic Friday');
+  await page.getByLabel('Group name', { exact: true }).press('Enter');
+  await page.getByRole('button', { name: 'Delete group Synthetic Friday', exact: true }).click();
+  await page.getByRole('button', { name: 'Review group entry', exact: true }).click();
+  const peopleEntry = await submitAndCapture(page, 'Confirm entry');
+  assert.equal(peopleEntry.entry.totalAmount, 2);
+  assert.equal(peopleEntry.entry.occurredAt, null);
+  assert.equal(peopleEntry.entry.memory, null);
+  assert.equal(peopleEntry.entry.correctionOfEntryId, null);
+
+  setStage('metadata-session-expiry');
+  await navigate(page, `entry/${peopleEntry.entry.id}?edit=memory`, 'An occasion with the crew');
+  const newTitle = `Recovered ${label} occasion`;
+  await page.getByLabel('Title', { exact: true }).fill(newTitle);
+  let memoryRequests = 0;
+  const memoryUrl = `${apiOrigin}/api/entries/${peopleEntry.entry.id}/memory`;
+  await context.route(memoryUrl, async (route) => {
+    memoryRequests += 1;
+    if (memoryRequests === 1) {
+      const response = await route.fetch({
+        headers: {
+          ...route.request().headers(),
+          authorization: 'Bearer expired-synthetic-session',
+        },
+        maxRedirects: 0,
+      });
+      assert.equal(response.status(), 401);
+      await route.fulfill({ response });
+    } else await route.fallback();
+  });
+  await page.getByRole('button', { name: 'Save memory details', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Step behind the bar', exact: true }).waitFor();
+  await loginDialog(page);
+  assert.equal(memoryRequests, 1, 'Login automatically saved a metadata draft.');
+  assert.equal(await page.getByLabel('Title', { exact: true }).inputValue(), newTitle);
+  const memoryResponse = page.waitForResponse(
+    (response) => response.url() === memoryUrl && response.status() === 200,
+  );
+  await page.getByRole('button', { name: 'Save memory details', exact: true }).click();
+  await memoryResponse;
+  await page.getByRole('heading', { name: newTitle, exact: true }).waitFor();
+  await page
+    .getByText('Memory saved. Quantities and recording time are unchanged.', { exact: true })
+    .waitFor();
+  assert.equal((await localJson(`/api/entries/${peopleEntry.entry.id}`)).entry.totalAmount, 2);
+  await context.unroute(memoryUrl);
+  await screenshot('recovered-memory');
+
+  setStage('archive-portability');
+  const query = new URLSearchParams({ q: archiveNeedle }).toString();
+  await navigate(page, `history?${query}`, 'The shared history');
+  const exportBefore = await localJson('/api/summary');
+  const jsonDownload = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Export public JSON', exact: true }).click();
+  const archive = JSON.parse(await readFile(await (await jsonDownload).path(), 'utf8'));
+  assert.equal(archive.completeness, 'complete');
+  assert.equal(archive.entries.length, fixtures.archiveIds.length);
+  assert.deepEqual(
+    archive.entries.map((entry) => entry.id).sort(),
+    [...fixtures.archiveIds].sort(),
+  );
+  assert.equal(new Set(archive.entries.map((entry) => entry.id)).size, fixtures.archiveIds.length);
+  assert(!JSON.stringify(archive).includes('idempotencyKey'));
+  await page
+    .getByText(
+      `Complete: ${fixtures.archiveIds.length} public records exported at revision ${archive.revision}.`,
+      { exact: true },
+    )
+    .waitFor();
+  const csvDownload = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Export public CSV', exact: true }).click();
+  const csv = await readFile(await (await csvDownload).path(), 'utf8');
+  assert.equal(csv.trim().split(/\r?\n/u).length, fixtures.archiveIds.length + 1);
+  assert.equal(
+    (await localJson('/api/summary')).revision,
+    exportBefore.revision,
+    'Export mutated public data.',
+  );
+
+  setStage('archive-export-cancel');
+  let releaseExport;
+  let requestStarted;
+  let requestFinished;
+  const held = new Promise((resolve) => {
+    releaseExport = resolve;
+  });
+  const started = new Promise((resolve) => {
+    requestStarted = resolve;
+  });
+  const finished = new Promise((resolve) => {
+    requestFinished = resolve;
+  });
+  const entriesPattern = /\/api\/entries\?/u;
+  let heldOnce = false;
+  await context.route(entriesPattern, async (route) => {
+    const params = new URL(route.request().url()).searchParams;
+    if (heldOnce || params.get('limit') !== '50' || params.get('q') !== archiveNeedle) {
+      await route.fallback();
+      return;
+    }
+    heldOnce = true;
+    const response = await route.fetch({ maxRedirects: 0 });
+    requestStarted();
+    await held;
+    await route.fulfill({ response });
+    requestFinished();
+  });
+  let canceledDownloads = 0;
+  const countDownload = () => {
+    canceledDownloads += 1;
+  };
+  page.on('download', countDownload);
+  await page.getByRole('button', { name: 'Export public JSON', exact: true }).click();
+  await started;
+  await page.getByRole('button', { name: 'Cancel export', exact: true }).click();
+  await page.getByText('Export canceled. No file was created.', { exact: true }).waitFor();
+  releaseExport();
+  await finished;
+  assert.equal(canceledDownloads, 0);
+  page.off('download', countDownload);
+  await context.unroute(entriesPattern);
+
+  setStage('recap-period-navigation');
+  const period = fixtures.entry.localDay.slice(0, 7);
+  await navigate(page, `recaps?period=${period}`, 'Recaps');
+  await page.getByLabel('Recap month', { exact: true }).selectOption('all');
+  await page.waitForURL(`**#/recaps?period=${period.slice(0, 4)}`);
+  await page.getByLabel('Recap month', { exact: true }).selectOption(period.slice(5));
+  await page.waitForURL(`**#/recaps?period=${period}`);
+  await page.getByRole('button', { name: '← Previous month', exact: true }).click();
+  assert.notEqual(new URL(page.url()).hash, `#/recaps?period=${period}`);
+  await page.getByRole('button', { name: 'Next month →', exact: true }).click();
+  await page.waitForURL(`**#/recaps?period=${period}`);
+  await page.reload();
+  await page.getByLabel('Recap month', { exact: true }).waitFor();
+  assert.equal(await page.getByLabel('Recap month', { exact: true }).inputValue(), period.slice(5));
+  await screenshot('recap-controls');
+  setStage('refreshed-correction-allowance');
+  await navigate(page, `entry/${correctedGroup.id}`, `${label} gathering`);
+  await page.getByRole('button', { name: 'Correct this entry', exact: true }).click();
+  assert.equal(
+    await page.getByLabel('Beer allocation for participant 1', { exact: true }).getAttribute('max'),
+    '1',
+  );
+  assert.equal(
+    await page.getByLabel('Beer allocation for participant 1', { exact: true }).inputValue(),
+    '1',
+  );
+  assert.equal(
+    await page.getByLabel('Beer allocation for participant 2', { exact: true }).getAttribute('max'),
+    '3',
+  );
+  await page.getByRole('button', { name: 'Close update form', exact: true }).click();
+  await page.goto(appUrl);
+  const after = await assertHeroMatchesApi(page);
+  assert.equal(after.stats.total, before.stats.total + 4);
+  assert.equal(after.stats.entryCount, before.stats.entryCount + 3);
+  assert.equal(after.stats.allocationCount, before.stats.allocationCount + 4);
+}
+
 async function browserCase(engineName, engine, mobile, fixtures) {
   const label = `${engineName}-${mobile ? 'mobile' : 'desktop'}`;
   const browser = await engine.launch({ headless: true, env: childEnv });
@@ -368,7 +670,9 @@ async function browserCase(engineName, engine, mobile, fixtures) {
   const appErrors = [];
   const screenshotDiagnostics = [];
   const intentionalNetworkDiagnostics = [];
+  const intentionalAuthorizationDiagnostics = [];
   const unexpectedNetwork = [];
+  const canceledReadDiagnostics = [];
   let stage = 'navigation';
   let capturingScreenshot = false;
   let intentionalResponseLoss = false;
@@ -409,6 +713,20 @@ async function browserCase(engineName, engine, mobile, fixtures) {
       return;
     }
     if (
+      ['member-session-expiry', 'metadata-session-expiry'].includes(stage) &&
+      source.startsWith(apiOrigin) &&
+      /401|Unauthorized/u.test(text)
+    ) {
+      intentionalAuthorizationDiagnostics.push(text);
+      return;
+    }
+    if (
+      stage === 'archive-export-cancel' &&
+      source.startsWith(`${apiOrigin}/api/entries`) &&
+      /Failed to load resource|Load failed|abort/iu.test(text)
+    )
+      return;
+    if (
       stage === 'missing-record' &&
       source.startsWith(`${apiOrigin}/api/entries`) &&
       /Failed to load resource|net::ERR_FAILED|Load failed/u.test(text)
@@ -423,10 +741,23 @@ async function browserCase(engineName, engine, mobile, fixtures) {
       request.url() === `${apiOrigin}/api/entries`
     )
       return;
-    if (request.failure()?.errorText.includes('ERR_ABORTED') && request.method() === 'GET') return;
+    if (
+      stage === 'archive-export-cancel' &&
+      request.method() === 'GET' &&
+      request.url().startsWith(`${apiOrigin}/api/entries`)
+    )
+      return;
+    if (
+      request.method() === 'GET' &&
+      /ERR_ABORTED|NS_BINDING_ABORTED|^cancelled$/u.test(request.failure()?.errorText ?? '')
+    ) {
+      canceledReadDiagnostics.push(request.failure()?.errorText);
+      return;
+    }
     unexpectedNetwork.push(`${request.method()} ${request.url()} ${request.failure()?.errorText}`);
   });
   async function screenshot(name) {
+    await page.evaluate(() => globalThis.window.scrollTo({ top: 0, behavior: 'instant' }));
     assert.deepEqual(appErrors, [], `${label}: application errors before screenshot`);
     await assertNoOverflow(page, `${label}/${name}`);
     capturingScreenshot = true;
@@ -487,7 +818,7 @@ async function browserCase(engineName, engine, mobile, fixtures) {
       await page.getByLabel('Image format', { exact: true }).selectOption(format);
       await page.waitForFunction(
         ({ width, height }) => {
-          const c = document.querySelector('.card-preview canvas');
+          const c = globalThis.document.querySelector('.card-preview canvas');
           return c?.width === width && c?.height === height;
         },
         { width, height },
@@ -650,6 +981,8 @@ async function browserCase(engineName, engine, mobile, fixtures) {
       corrected.entry.allocations.map((allocation) => allocation.remainingCorrectable),
       [1, 3],
     );
+    await page.getByRole('heading', { name: 'Linked corrections', exact: true }).waitFor();
+    assert.equal(new URL(page.url()).hash, `#/entry/${group.entry.id}`);
     await page.goto(appUrl);
     assert.equal((await assertHeroMatchesApi(page)).stats.total, before.stats.total + 6);
 
@@ -715,6 +1048,17 @@ async function browserCase(engineName, engine, mobile, fixtures) {
     assert.equal(after.stats.allocationCount, before.stats.allocationCount + 5);
     assert.equal(await page.evaluate((key) => localStorage.getItem(key), draftKey), null);
     await context.unroute(`${apiOrigin}/api/entries`);
+    await verifyRecordingAndArchive({
+      page,
+      context,
+      label,
+      fixtures,
+      correctedGroup: group.entry,
+      screenshot,
+      setStage: (next) => {
+        stage = next;
+      },
+    });
     stage = 'completed';
     assert.deepEqual(appErrors, [], `${label}: application console/page errors`);
     assert.deepEqual(
@@ -745,13 +1089,24 @@ async function browserCase(engineName, engine, mobile, fixtures) {
         'reauthentication',
         'exact-idempotent-retry',
         'canonical-total',
+        'contextual-member-recording-and-refresh',
+        'explicit-default-participant-reset',
+        'member-create-session-expiry-and-deliberate-retry',
+        'contextual-group-people-only',
+        'inline-saved-group-naming-rename-delete',
+        'metadata-session-expiry-and-deliberate-save',
+        'multi-page-complete-public-json-csv',
+        'cancel-export-no-file',
+        'recap-month-year-navigation-reload',
         'three-image-formats-preview-download-match',
         'base-path-installation-icons',
         'factual-partners',
         ...(engineName === 'chromium' ? ['320px-sharing-and-partners'] : []),
       ],
       screenshotOnlyDiagnostics: screenshotDiagnostics.length,
+      canceledReadDiagnostics: canceledReadDiagnostics.length,
       intentionalResponseLossDiagnostics: intentionalNetworkDiagnostics.length,
+      intentionalSessionExpiryDiagnostics: intentionalAuthorizationDiagnostics.length,
       physicalDevice: false,
     };
   } catch (error) {
@@ -859,6 +1214,7 @@ try {
   running = await startWorker();
   assert.equal(running.ready.capabilities.enhancedLogging, true);
   const fixtures = await seed();
+  fixtures.archiveIds = await seedArchiveFixtures();
   await command(
     [
       path.join(repository, 'node_modules/vite/bin/vite.js'),

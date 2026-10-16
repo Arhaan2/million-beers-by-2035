@@ -10,6 +10,7 @@ export function MemoryEditor({
   entry,
   token,
   onSaved,
+  onRefreshed,
   onLogin,
   initiallyOpen = false,
   available = true,
@@ -18,6 +19,7 @@ export function MemoryEditor({
   entry: BeerEntry;
   token?: string | undefined;
   onSaved: (entry: BeerEntry) => void;
+  onRefreshed?: (details: { entry: BeerEntry; corrections: BeerEntry[] }) => void;
   onLogin: () => void;
   initiallyOpen?: boolean;
   available?: boolean;
@@ -58,7 +60,11 @@ export function MemoryEditor({
       ),
     );
     if (!dirty.size) setVersion(entry.metadataVersion ?? 0);
-    if (latest) {
+    if (
+      latest &&
+      ((latest.metadataVersion ?? 0) !== (entry.metadataVersion ?? 0) ||
+        !sameMemory(latest.memory ?? {}, entry.memory))
+    ) {
       setLatest(null);
       setNeedsCheck(true);
     }
@@ -70,13 +76,18 @@ export function MemoryEditor({
         error: false,
       });
   }
-  const confirmed = (saved: BeerEntry, recovered = false) => {
+  const confirmed = (
+    saved: BeerEntry,
+    recovered = false,
+    details?: { entry: BeerEntry; corrections: BeerEntry[] },
+  ) => {
     setVersion(saved.metadataVersion ?? 0);
     setMemory(saved.memory ?? {});
     setDirty(new Set());
     setLatest(null);
     setNeedsCheck(false);
-    onSaved(saved);
+    if (details && onRefreshed) onRefreshed(details);
+    else onSaved(saved);
     setMessage({
       text: recovered
         ? 'The latest saved details match your draft. Save confirmed.'
@@ -87,13 +98,23 @@ export function MemoryEditor({
   const reconcile = async (conflict = false) => {
     const attempt = generation.current;
     try {
-      const saved = (await fetchEntry(entry.id)).entry;
+      const details = await fetchEntry(entry.id);
+      const saved = details.entry;
       if (generation.current !== attempt) return;
       setNeedsCheck(false);
       if (!conflict && sameMemory(memory, saved.memory)) {
-        confirmed(saved, true);
+        confirmed(saved, true, details);
         return;
       }
+      setMemory(
+        Object.fromEntries(
+          fields.map((field) => [
+            field,
+            dirty.has(field) ? (memory[field] ?? '') : (saved.memory?.[field] ?? ''),
+          ]),
+        ),
+      );
+      onRefreshed?.(details);
       setLatest(saved);
       setMessage({
         text: conflict
@@ -183,7 +204,10 @@ export function MemoryEditor({
                 readOnly={busy}
                 onChange={(event) => {
                   setMemory({ ...memory, [field]: event.target.value });
-                  setDirty(new Set([...dirty, field]));
+                  const nextDirty = new Set(dirty);
+                  if (event.target.value === (entry.memory?.[field] ?? '')) nextDirty.delete(field);
+                  else nextDirty.add(field);
+                  setDirty(nextDirty);
                   if (!latest && !needsCheck) setMessage(null);
                 }}
               />

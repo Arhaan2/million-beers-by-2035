@@ -430,13 +430,16 @@ export function EntryDetail({
   editMemory?: boolean;
 }) {
   const result = useResource(() => fetchEntry(id), id, resourceRevision);
-  const [edited, setEdited] = useState<BeerEntry | null>(null);
-  const publicEntry = result.data?.entry;
-  const entry = publicEntry
-    ? edited && (edited.metadataVersion ?? 0) > (publicEntry.metadataVersion ?? 0)
-      ? edited
-      : publicEntry
-    : null;
+  const [edited, setEdited] = useState<{
+    id: string;
+    source: Awaited<ReturnType<typeof fetchEntry>> | null;
+    data: Awaited<ReturnType<typeof fetchEntry>>;
+  } | null>(null);
+  // A newer direct read supersedes the current resource even if privacy changed without a
+  // metadata version increment. The next resource response then replaces this override.
+  const details =
+    edited && edited.id === id && edited.source === result.data ? edited.data : result.data;
+  const entry = details?.entry ?? null;
   const editor = capabilities?.metadataEditing ? (
     <MemoryEditor
       key={id}
@@ -458,21 +461,30 @@ export function EntryDetail({
       available={Boolean(entry)}
       resourceRevision={resourceRevision}
       onLogin={onLogin ?? (() => undefined)}
+      onRefreshed={(fresh) => {
+        setEdited({ id, source: result.data, data: fresh });
+        result.retry();
+        onMutation?.();
+      }}
       onSaved={(saved) => {
-        setEdited(saved);
+        setEdited({
+          id,
+          source: result.data,
+          data: { entry: saved, corrections: details?.corrections ?? [] },
+        });
         result.retry();
         onMutation?.();
       }}
     />
   ) : null;
-  if (!entry || !result.data)
+  if (!entry || !details)
     return (
       <>
         <PageStatus error={result.error} onRetry={result.retry} pageTitle />
         {editor}
       </>
     );
-  const { corrections } = result.data;
+  const { corrections } = details;
   const memory = entry.memory;
   const occurrence = entry.occurredAt ? new Date(entry.occurredAt) : null;
   const occurredLabel = occurrence
@@ -829,10 +841,18 @@ function OnThisDate({
   timezone: string;
   resourceRevision: number;
 }) {
+  const [now] = useState(Date.now);
+  const dateParts = new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(now);
+  const monthDay = `${dateParts.find((part) => part.type === 'month')?.value}-${dateParts.find((part) => part.type === 'day')?.value}`;
+  const dateQuery = new URLSearchParams({ monthDay }).toString();
   const { page, busy, error, more, retry } = useCommunityPages(
-    (cursor) => fetchOnThisDate(withCursor('', cursor)),
+    (cursor) => fetchOnThisDate(withCursor(dateQuery, cursor)),
     mergeEntries,
-    'on-this-date',
+    `on-this-date:${monthDay}`,
     resourceRevision,
     'More memories could not be loaded. Try again.',
   );
@@ -1067,6 +1087,24 @@ export function MilestoneHistory({ revision }: { revision: number }) {
                   {milestone.recordedDay}
                 </a>
                 <small>Day closed at {formatInteger(milestone.closingTotal)}</small>
+                <details className="milestone-share">
+                  <summary>Share this recorded milestone</summary>
+                  <ShareActions
+                    data={{
+                      title: `${formatInteger(milestone.amount)} recorded`,
+                      subtitle: `Recorded-day milestone · ${milestone.recordedDay}`,
+                      lines: [
+                        `First day closing at or above ${formatInteger(milestone.amount)}`,
+                        `Day closed at ${formatInteger(milestone.closingTotal)} · includes corrections`,
+                        'Intraday crossing time is unknown.',
+                      ],
+                      url: new URL(
+                        `#/history?${new URLSearchParams({ from: milestone.recordedDay, to: milestone.recordedDay, dateBasis: 'recorded' }).toString()}`,
+                        window.location.href,
+                      ).href,
+                    }}
+                  />
+                </details>
               </li>
             ))}
           </ol>
