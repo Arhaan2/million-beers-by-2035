@@ -22,10 +22,14 @@ export function ShareActions({ data }: { data: ShareCardData }) {
   const prepared = useRef<{ key: string; file: File } | null>(null);
   const previewId = useId();
   const key = JSON.stringify([data, format, includeNames]);
-  const currentKey = useRef(key);
+  const currentKey = useRef<string | null>(key);
   useLayoutEffect(() => {
     currentKey.current = key;
     prepared.current = null;
+    return () => {
+      currentKey.current = null;
+      prepared.current = null;
+    };
   }, [key]);
 
   useEffect(() => {

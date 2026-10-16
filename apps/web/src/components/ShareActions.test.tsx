@@ -121,3 +121,32 @@ it('discards an in-flight card when the public projection changes', async () => 
   expect(screen.getByRole('button', { name: 'Download image card' })).toBeEnabled();
   vi.restoreAllMocks();
 });
+
+it('discards an in-flight image when its public view unmounts', async () => {
+  const context = {
+    fillRect: vi.fn(),
+    fillText: vi.fn(),
+    measureText: (text: string) => ({ width: text.length * 10 }),
+    beginPath: vi.fn(),
+    moveTo: vi.fn(),
+    lineTo: vi.fn(),
+    stroke: vi.fn(),
+  };
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(
+    context as unknown as CanvasRenderingContext2D,
+  );
+  let complete: BlobCallback | undefined;
+  vi.spyOn(HTMLCanvasElement.prototype, 'toBlob').mockImplementation((callback) => {
+    complete = callback;
+  });
+  const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+  const view = render(<ShareActions data={data} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Download image card' }));
+  view.unmount();
+  await act(async () => {
+    complete?.(new Blob(['PNG'], { type: 'image/png' }));
+    await Promise.resolve();
+  });
+  expect(click).not.toHaveBeenCalled();
+  vi.restoreAllMocks();
+});
