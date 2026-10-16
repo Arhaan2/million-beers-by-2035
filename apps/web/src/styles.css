@@ -2612,3 +2612,185 @@ footer a {
     padding-inline: 3px;
   }
 }
+
+/* Cards and project information retain the existing quiet amber/cream surfaces. */
+.card-options {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 1rem 2rem;
+  margin-block: 1rem;
+}
+.card-options label {
+  max-width: 100%;
+}
+.card-options select {
+  display: block;
+  width: 100%;
+  margin-top: 0.5rem;
+}
+.card-preview {
+  margin: 1.5rem 0;
+  max-width: 46rem;
+}
+.card-preview--square {
+  max-width: 34rem;
+}
+.card-preview--story {
+  max-width: 25rem;
+}
+.card-preview canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid #755b30;
+  border-radius: 1rem;
+}
+.card-preview figcaption {
+  margin-top: 0.75rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+.partners-page {
+  max-width: 68rem;
+  margin-inline: auto;
+}
+.partners-page > h2 {
+  max-width: 20ch;
+}
+.partners-page .prose {
+  margin-block: 2rem;
+  padding: clamp(1.25rem, 3vw, 2.5rem);
+}
+.partners-page .prose p {
+  max-width: 66ch;
+}
+.partners-metrics {
+  margin-block: 2.5rem;
+}
+.partner-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1.5rem;
+}
+.partner-stats dt {
+  font-weight: 650;
+}
+.partner-stats dd {
+  font-size: clamp(2.2rem, 5vw, 3.5rem);
+  line-height: 1.2;
+  letter-spacing: -0.03em;
+  color: var(--amber);
+  margin: 0.75rem 0;
+}
+.partner-stats p {
+  font-size: 0.95rem;
+  line-height: 1.55;
+}
+.install-guidance {
+  margin-block: 2rem;
+}
+.install-guidance details {
+  max-width: 46rem;
+}
+.install-guidance summary {
+  cursor: pointer;
+  min-height: 2.75rem;
+  padding-block: 0.75rem;
+}
+.install-guidance p {
+  max-width: 65ch;
+}
+.offline-notice {
+  padding: 1rem;
+  border: 1px solid #755b30;
+  border-radius: 0.75rem;
+}
+@media (max-width: 650px) {
+  .partner-stats {
+    grid-template-columns: 1fr;
+  }
+}
+.save-receipt {
+  margin-block: 1.5rem;
+  padding: 1.25rem;
+}
+.save-receipt details {
+  margin-top: 1rem;
+}
+.participant-preference {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  margin-block: 1rem;
+}
+.saved-group-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-block: 0.5rem;
+}
+.saved-group-editor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 0.75rem;
+  margin-block: 1rem;
+}
+.saved-group-editor label {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+.recap-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 1rem;
+  margin-block: 1.5rem;
+}
+.recap-controls label {
+  min-width: 0;
+}
+.recap-controls select,
+.archive-months select {
+  display: block;
+  width: 100%;
+  margin-top: 0.5rem;
+}
+.archive-months {
+  display: block;
+  max-width: 28rem;
+  margin-block: 1.5rem;
+}
+.archive-export {
+  margin-block: 1.5rem;
+  padding-block: 1rem;
+}
+select {
+  min-height: 2.75rem;
+  max-width: 100%;
+  padding: 0.6rem 2rem 0.6rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 0.65rem;
+  background: var(--panel-solid);
+  color: var(--cream);
+  font: inherit;
+}
+.partners-page {
+  padding-block: 1.5rem;
+}
+.partners-page > h2 {
+  font-size: clamp(2rem, 3.8vw, 3rem);
+  line-height: 1.12;
+  letter-spacing: -0.025em;
+}
+.partners-page .page-intro {
+  max-width: 65ch;
+}
+.install-guidance {
+  width: calc(100% - 2rem);
+  max-width: var(--content-width);
+  margin-inline: auto;
+}

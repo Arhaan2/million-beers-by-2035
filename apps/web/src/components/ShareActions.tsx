@@ -1,97 +1,66 @@
-import { useEffect, useRef, useState } from 'react';
-export interface ShareCardData {
-  title: string;
-  subtitle: string;
-  lines: string[];
-  names?: string[];
-  url: string;
-}
-function drawLines(
-  context: CanvasRenderingContext2D,
-  text: string,
-  x: number,
-  y: number,
-  width: number,
-  lineHeight: number,
-  maxLines: number,
-): number {
-  const words = text.split(/\s+/u);
-  let line = '';
-  let count = 0;
-  for (const word of words) {
-    const next = `${line} ${word}`.trim();
-    if (context.measureText(next).width > width && line) {
-      context.fillText(line, x, y);
-      y += lineHeight;
-      count += 1;
-      line = word;
-      if (count >= maxLines) return y;
-    } else line = next;
-  }
-  if (count < maxLines) context.fillText(line, x, y);
-  return y + lineHeight;
-}
-async function exportCard(data: ShareCardData, includeNames: boolean): Promise<void> {
-  const canvas = document.createElement('canvas');
-  canvas.width = 1200;
-  canvas.height = 630;
-  const context = canvas.getContext('2d');
-  if (!context) throw new Error('Image export is unavailable in this browser.');
-  context.fillStyle = '#100e0a';
-  context.fillRect(0, 0, 1200, 630);
-  context.fillStyle = '#f2a91e';
-  context.fillRect(56, 52, 64, 6);
-  context.font = '700 20px sans-serif';
-  context.fillText('THE MILLION BEER PROJECT', 56, 103);
-  context.fillStyle = '#fff5df';
-  context.font = '700 58px sans-serif';
-  let y = drawLines(context, data.title, 56, 200, 1088, 68, 2);
-  context.fillStyle = '#c4b7a0';
-  context.font = '26px sans-serif';
-  y = drawLines(context, data.subtitle, 56, y + 22, 1088, 34, 2);
-  context.fillStyle = '#ffd476';
-  context.font = '600 29px sans-serif';
-  for (const line of data.lines.slice(0, 2)) {
-    y = drawLines(context, line, 56, y + 26, 1088, 38, 1);
-  }
-  if (includeNames && data.names?.length) {
-    context.fillStyle = '#c4b7a0';
-    context.font = '22px sans-serif';
-    drawLines(context, data.names.join(' · '), 56, 510, 1088, 29, 2);
-  }
-  context.strokeStyle = '#574321';
-  context.beginPath();
-  context.moveTo(56, 562);
-  context.lineTo(1144, 562);
-  context.stroke();
-  context.fillStyle = '#c4b7a0';
-  context.font = '18px sans-serif';
-  context.fillText('One crew. A shared record of time together. By 2035.', 56, 601);
-  const blob = await new Promise<Blob>((resolve, reject) =>
-    canvas.toBlob(
-      (value) => (value ? resolve(value) : reject(new Error('Image export failed.'))),
-      'image/png',
-    ),
-  );
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = 'million-beers-memory.png';
-  link.click();
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import {
+  cardFormats,
+  renderShareCard,
+  shareCardBlob,
+  type CardFormat,
+  type ShareCardData,
+} from '../lib/shareCard';
+export type { ShareCardData } from '../lib/shareCard';
+
 export function ShareActions({ data }: { data: ShareCardData }) {
   const [includeNames, setIncludeNames] = useState(false);
+  const [format, setFormat] = useState<CardFormat>('landscape');
+  const [preview, setPreview] = useState(false);
   const [message, setMessage] = useState('');
   const [fallback, setFallback] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [copying, setCopying] = useState(false);
   const [sharing, setSharing] = useState(false);
   const linkRef = useRef<HTMLInputElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const prepared = useRef<{ key: string; file: File } | null>(null);
+  const previewId = useId();
+  const key = JSON.stringify([data, format, includeNames]);
+  const currentKey = useRef<string | null>(key);
+  useLayoutEffect(() => {
+    currentKey.current = key;
+    prepared.current = null;
+    return () => {
+      currentKey.current = null;
+      prepared.current = null;
+    };
+  }, [key]);
 
   useEffect(() => {
     if (fallback) linkRef.current?.focus();
   }, [fallback]);
+  useEffect(() => {
+    if (!preview || !canvasRef.current) return;
+    let active = true;
+    try {
+      renderShareCard(canvasRef.current, data, format, includeNames);
+      void shareCardBlob(canvasRef.current)
+        .then((blob) => {
+          if (active)
+            prepared.current = {
+              key,
+              file: new File([blob], `million-beers-${format}.png`, { type: 'image/png' }),
+            };
+        })
+        .catch(() => {
+          /* Download/share can retry without losing the preview. */
+        });
+    } catch (error) {
+      // Canvas itself exposes a textual fallback in unsupported browsers.
+      if (canvasRef.current)
+        canvasRef.current.textContent =
+          error instanceof Error ? error.message : 'Preview unavailable.';
+    }
+    return () => {
+      active = false;
+    };
+  }, [data, format, includeNames, key, preview]);
 
   const showCopyFallback = (detail: string) => {
     setFallback(true);
@@ -99,20 +68,40 @@ export function ShareActions({ data }: { data: ShareCardData }) {
     linkRef.current?.focus();
     linkRef.current?.select();
   };
-
+  const makeFile = async () => {
+    if (prepared.current?.key === key) return prepared.current.file;
+    const canvas = document.createElement('canvas');
+    renderShareCard(canvas, data, format, includeNames);
+    const file = new File([await shareCardBlob(canvas)], `million-beers-${format}.png`, {
+      type: 'image/png',
+    });
+    if (currentKey.current !== key)
+      throw new Error(
+        'The saved data or image format changed. Preview the current card and try again.',
+      );
+    prepared.current = { key, file };
+    return file;
+  };
   const download = async () => {
     setExporting(true);
     setMessage('Preparing image…');
     try {
-      await exportCard(data, includeNames);
+      const file = await makeFile();
+      if (currentKey.current !== key)
+        throw new Error('The saved data changed. Preview the current card and try again.');
+      const url = URL.createObjectURL(file);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = file.name;
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
       setMessage('Image downloaded.');
-    } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : 'Image export failed.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Image export failed. Please try again.');
     } finally {
       setExporting(false);
     }
   };
-
   const copyLink = async () => {
     setCopying(true);
     setMessage('Copying link…');
@@ -126,41 +115,77 @@ export function ShareActions({ data }: { data: ShareCardData }) {
       setCopying(false);
     }
   };
-
   const share = async () => {
     setSharing(true);
     setMessage('Opening share sheet…');
     try {
-      await navigator.share({ title: data.title, url: data.url });
+      if (typeof navigator.canShare === 'function') {
+        // Prepare before opening the native sheet so the next gesture retains
+        // transient user activation on browsers that require it for file sharing.
+        if (prepared.current?.key !== key) {
+          await makeFile();
+          setPreview(true);
+          setMessage('Image ready. Choose Share… again to open the share sheet.');
+          return;
+        }
+        const files = [prepared.current.file];
+        if (navigator.canShare({ files })) await navigator.share({ files, title: data.title });
+        else await navigator.share({ title: data.title, url: data.url });
+      } else await navigator.share({ title: data.title, url: data.url });
       setMessage('Shared.');
-    } catch (caught) {
-      if (caught instanceof DOMException && caught.name === 'AbortError') {
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError')
         setMessage('Sharing canceled.');
-      } else {
-        showCopyFallback('Sharing unavailable. Copy the selected link below.');
-      }
+      else
+        showCopyFallback(
+          'Sharing unavailable. Download the image or copy the selected link below.',
+        );
     } finally {
       setSharing(false);
     }
   };
-
   return (
     <section className="share-actions" aria-label="Share this saved record">
       <p className="helper">
-        Share a public link or download a card from this saved record. Names are optional. Social
-        links use the project’s generic preview.
+        Share a public link or image from this saved record. Names are optional. Social links use
+        the project’s generic preview. Downloaded or shared images cannot be recalled.
       </p>
-      {data.names?.length ? (
-        <label className="check-label">
-          <input
-            type="checkbox"
-            checked={includeNames}
-            onChange={(event) => setIncludeNames(event.target.checked)}
-          />
-          Include public display names on the image
+      <div className="card-options">
+        <label>
+          Image format
+          <select
+            aria-label="Image format"
+            value={format}
+            onChange={(event) => setFormat(event.target.value as CardFormat)}
+          >
+            {Object.entries(cardFormats).map(([value, option]) => (
+              <option key={value} value={value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
         </label>
-      ) : null}
+        {data.names?.length ? (
+          <label className="check-label">
+            <input
+              type="checkbox"
+              checked={includeNames}
+              onChange={(event) => setIncludeNames(event.target.checked)}
+            />
+            Include public display names on the image
+          </label>
+        ) : null}
+      </div>
       <div className="button-row">
+        <button
+          type="button"
+          className="button button--quiet"
+          aria-expanded={preview}
+          aria-controls={previewId}
+          onClick={() => setPreview(!preview)}
+        >
+          {preview ? 'Hide preview' : 'Preview image card'}
+        </button>
         <button
           type="button"
           className="button button--outline"
@@ -191,6 +216,19 @@ export function ShareActions({ data }: { data: ShareCardData }) {
           </button>
         ) : null}
       </div>
+      {preview ? (
+        <figure id={previewId} className={`card-preview card-preview--${format}`}>
+          <canvas
+            ref={canvasRef}
+            role="img"
+            aria-label={`${cardFormats[format].label} card: ${data.title}. ${data.subtitle}. ${data.lines.join('. ')}${includeNames ? `. ${data.names?.join(', ')}` : ''}`}
+          />
+          <figcaption>
+            Preview uses the same image as the download. Long text may be shortened with an
+            ellipsis.
+          </figcaption>
+        </figure>
+      ) : null}
       {fallback ? (
         <label>
           Public link
