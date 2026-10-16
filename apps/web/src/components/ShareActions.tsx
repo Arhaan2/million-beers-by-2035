@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import {
   cardFormats,
   renderShareCard,
@@ -22,6 +22,11 @@ export function ShareActions({ data }: { data: ShareCardData }) {
   const prepared = useRef<{ key: string; file: File } | null>(null);
   const previewId = useId();
   const key = JSON.stringify([data, format, includeNames]);
+  const currentKey = useRef(key);
+  useLayoutEffect(() => {
+    currentKey.current = key;
+    prepared.current = null;
+  }, [key]);
 
   useEffect(() => {
     if (fallback) linkRef.current?.focus();
@@ -66,6 +71,10 @@ export function ShareActions({ data }: { data: ShareCardData }) {
     const file = new File([await shareCardBlob(canvas)], `million-beers-${format}.png`, {
       type: 'image/png',
     });
+    if (currentKey.current !== key)
+      throw new Error(
+        'The saved data or image format changed. Preview the current card and try again.',
+      );
     prepared.current = { key, file };
     return file;
   };
@@ -74,6 +83,8 @@ export function ShareActions({ data }: { data: ShareCardData }) {
     setMessage('Preparing image…');
     try {
       const file = await makeFile();
+      if (currentKey.current !== key)
+        throw new Error('The saved data changed. Preview the current card and try again.');
       const url = URL.createObjectURL(file);
       const link = document.createElement('a');
       link.href = url;
@@ -138,7 +149,11 @@ export function ShareActions({ data }: { data: ShareCardData }) {
       <div className="card-options">
         <label>
           Image format
-          <select value={format} onChange={(event) => setFormat(event.target.value as CardFormat)}>
+          <select
+            aria-label="Image format"
+            value={format}
+            onChange={(event) => setFormat(event.target.value as CardFormat)}
+          >
             {Object.entries(cardFormats).map(([value, option]) => (
               <option key={value} value={value}>
                 {option.label}

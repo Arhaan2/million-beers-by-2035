@@ -487,7 +487,7 @@ async function browserCase(engineName, engine, mobile, fixtures) {
       await page.getByLabel('Image format', { exact: true }).selectOption(format);
       await page.waitForFunction(
         ({ width, height }) => {
-          const c = document.querySelector('.card-preview canvas');
+          const c = globalThis.document.querySelector('.card-preview canvas');
           return c?.width === width && c?.height === height;
         },
         { width, height },

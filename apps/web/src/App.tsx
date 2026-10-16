@@ -10,6 +10,8 @@ import {
   RecapsPage,
 } from './components/CommunityPages';
 import { DashboardHeader } from './components/DashboardHeader';
+import { InstallGuidance } from './components/InstallGuidance';
+import { PartnersPage, ProjectShare } from './components/PartnersPage';
 import { Leaderboard } from './components/Leaderboard';
 import { LoginModal } from './components/LoginModal';
 import { ProgressDisplay } from './components/ProgressDisplay';
@@ -212,6 +214,7 @@ function App() {
   const supported =
     !section ||
     section === 'about' ||
+    section === 'partners' ||
     (section === 'crew' || section === 'member'
       ? capabilities?.crew
       : section === 'history' || section === 'entry' || section === 'recaps'
@@ -294,7 +297,9 @@ function App() {
               </button>
             </p>
           ) : null}
-          {section === 'about' ? (
+          {section === 'partners' ? (
+            <PartnersPage summary={summary} lastSuccessAt={lastSuccessAt} />
+          ) : section === 'about' ? (
             <AboutPage summary={summary} />
           ) : !supported && summary ? (
             <div className="page-status">
@@ -475,6 +480,7 @@ function App() {
                     detail="At the historical group rate; not a prediction"
                   />
                 </div>
+                <ProjectShare summary={summary} lastSuccessAt={lastSuccessAt} />
                 <div className="secondary-ledger">
                   <Leaderboard entries={summary.leaderboard} />
                   <MilestoneHistory revision={summary.revision ?? 0} />
@@ -504,11 +510,13 @@ function App() {
             </section>
           )}
         </main>
+        <InstallGuidance />
         <footer>
           <p>
             For adults of legal drinking age. Track responsibly. This counter is not a drinking
             recommendation. Never drink and drive.
           </p>
+          <a href="#/partners">Project partnerships</a>
           <a
             href="https://github.com/Arhaan2/million-beers-by-2035"
             target="_blank"

@@ -76,7 +76,9 @@ it('shares the prepared PNG when file sharing is supported and preserves cancell
   vi.spyOn(HTMLCanvasElement.prototype, 'toBlob').mockImplementation((callback) =>
     callback(new Blob(['PNG'], { type: 'image/png' })),
   );
-  const share = vi.fn().mockRejectedValue(new DOMException('Canceled', 'AbortError'));
+  const share = vi
+    .fn<(data: ShareData) => Promise<void>>()
+    .mockRejectedValue(new DOMException('Canceled', 'AbortError'));
   const canShare = vi.fn().mockReturnValue(true);
   vi.stubGlobal('navigator', { share, canShare });
   render(<ShareActions data={data} />);
@@ -85,8 +87,37 @@ it('shares the prepared PNG when file sharing is supported and preserves cancell
   expect(share).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole('button', { name: 'Share…' }));
   await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Sharing canceled.'));
-  expect(share.mock.calls[0]?.[0].files[0]).toBeInstanceOf(File);
-  expect(share.mock.calls[0]?.[0].files[0].type).toBe('image/png');
+  expect(share.mock.calls[0]?.[0]?.files?.[0]).toBeInstanceOf(File);
+  expect(share.mock.calls[0]?.[0]?.files?.[0]?.type).toBe('image/png');
   expect(share.mock.calls[0]?.[0]).not.toHaveProperty('url');
+  vi.restoreAllMocks();
+});
+
+it('discards an in-flight card when the public projection changes', async () => {
+  const context = {
+    fillRect: vi.fn(),
+    fillText: vi.fn(),
+    measureText: (text: string) => ({ width: text.length * 10 }),
+    beginPath: vi.fn(),
+    moveTo: vi.fn(),
+    lineTo: vi.fn(),
+    stroke: vi.fn(),
+  };
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(
+    context as unknown as CanvasRenderingContext2D,
+  );
+  let complete: BlobCallback | undefined;
+  vi.spyOn(HTMLCanvasElement.prototype, 'toBlob').mockImplementation((callback) => {
+    complete = callback;
+  });
+  const { rerender } = render(<ShareActions data={data} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Download image card' }));
+  rerender(<ShareActions data={{ ...data, title: 'Saved entry', names: [] }} />);
+  await act(async () => {
+    complete?.(new Blob(['PNG'], { type: 'image/png' }));
+    await Promise.resolve();
+  });
+  expect(screen.getByRole('status')).toHaveTextContent('changed');
+  expect(screen.getByRole('button', { name: 'Download image card' })).toBeEnabled();
   vi.restoreAllMocks();
 });
