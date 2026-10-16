@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  ApiRequestError,
   fetchEntries,
   fetchEntry,
   fetchMember,
@@ -10,10 +11,13 @@ import {
   fetchRecap,
   updateMemory,
 } from '../lib/api';
+import type * as Api from '../lib/api';
 import type { BeerEntry, Capabilities, MemberPage } from '../lib/types';
 import { CrewPage, EntryDetail, HistoryPage, MemberPageView, RecapsPage } from './CommunityPages';
+import { MemoryEditor } from './MemoryEditor';
 
-vi.mock('../lib/api', () => ({
+vi.mock('../lib/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof Api>()),
   fetchEntries: vi.fn(),
   fetchEntry: vi.fn(),
   fetchMember: vi.fn(),
@@ -178,7 +182,7 @@ describe('community page feedback', () => {
     expect(window.location.hash).toContain('from=2026-10-10&to=2026-10-11');
   });
 
-  it('rejects impossible recap months with guidance and accepts annual recaps', async () => {
+  it('uses accessible month/year controls and available recorded months while preserving query filters', async () => {
     vi.mocked(fetchRecap).mockResolvedValue({
       period: '2026-10',
       dateBasis: 'recorded',
@@ -187,6 +191,7 @@ describe('community page feedback', () => {
       participantCount: 0,
       entries: [],
       nextCursor: null,
+      availableMonths: ['2026-10', '2024-02'],
     });
     vi.mocked(fetchOnThisDate).mockResolvedValue({
       dateBasis: 'occurred',
@@ -195,19 +200,20 @@ describe('community page feedback', () => {
       nextCursor: null,
     });
     const user = userEvent.setup();
-    render(<RecapsPage query="period=2026-10" timezone="America/Los_Angeles" />);
-    const input = screen.getByLabelText('Month (YYYY-MM) or year (YYYY)');
-    await user.clear(input);
-    await user.type(input, '2026-13');
-    await user.tab();
-    expect(screen.getByRole('alert')).toHaveTextContent('Enter a year such as 2026');
-    expect(input).toBeInvalid();
-    await user.click(screen.getByRole('button', { name: 'View recap' }));
-    expect(window.location.hash).toBe('');
-    await user.clear(input);
-    await user.type(input, '2026');
-    await user.click(screen.getByRole('button', { name: 'View recap' }));
-    expect(window.location.hash).toBe('#/recaps?period=2026');
+    render(<RecapsPage query="period=2026-10&city=Portland" timezone="America/Los_Angeles" />);
+    await user.click(screen.getByRole('button', { name: '← Previous month' }));
+    expect(window.location.hash).toBe('#/recaps?period=2026-09&city=Portland');
+    await user.selectOptions(screen.getByLabelText('Recap month'), 'all');
+    expect(window.location.hash).toBe('#/recaps?period=2026&city=Portland');
+    await user.selectOptions(await screen.findByLabelText('Jump to a recorded month'), '2024-02');
+    expect(window.location.hash).toBe('#/recaps?period=2024-02&city=Portland');
+  });
+
+  it('provides a recovery route for invalid recap deep links without loading an invalid period', async () => {
+    render(<RecapsPage query="period=2026-13" timezone="America/Los_Angeles" />);
+    expect(await screen.findByRole('alert')).toHaveTextContent('invalid recap period');
+    expect(fetchRecap).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Open the current month' })).toBeEnabled();
   });
 
   it('announces memory save failures and keeps entered details available to retry', async () => {
@@ -241,5 +247,326 @@ describe('community page feedback', () => {
     expect(screen.getByRole('button', { name: 'Save memory details' })).toBeEnabled();
     await user.type(screen.getByLabelText('City'), ', OR');
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+  it('rejects an older detail read after a mutation refresh and updates correction allowances', async () => {
+    let oldRead: ((value: Awaited<ReturnType<typeof fetchEntry>>) => void) | undefined;
+    vi.mocked(fetchEntry)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            oldRead = resolve;
+          }),
+      )
+      .mockResolvedValueOnce({
+        entry: { ...entry, totalAmount: 4 },
+        corrections: [{ ...entry, id: 'correction', isCorrection: true, totalAmount: -1 }],
+      });
+    const view = render(
+      <EntryDetail id={entry.id} timezone="UTC" resourceRevision={0} onCorrect={() => undefined} />,
+    );
+    view.rerender(
+      <EntryDetail id={entry.id} timezone="UTC" resourceRevision={1} onCorrect={() => undefined} />,
+    );
+    await screen.findByRole('heading', { name: 'Linked corrections' });
+    await act(async () => {
+      oldRead?.({ entry, corrections: [] });
+      await Promise.resolve();
+    });
+    expect(screen.getByRole('heading', { name: 'Linked corrections' })).toBeInTheDocument();
+    expect(screen.getByText('+4')).toBeInTheDocument();
+  });
+
+  it('preserves a metadata draft through expiry, then requires a deliberate save after sign-in', async () => {
+    vi.mocked(fetchEntry).mockResolvedValue({ entry, corrections: [] });
+    vi.mocked(updateMemory)
+      .mockRejectedValueOnce(new ApiRequestError('Session expired.', 401))
+      .mockResolvedValueOnce({
+        entry: {
+          ...entry,
+          metadataVersion: 1,
+          memory: { title: 'Friday catch-up', city: 'Portland' },
+        },
+      });
+    const onLogin = vi.fn();
+    const capabilities = { metadataEditing: true } as Capabilities;
+    const props = {
+      id: entry.id,
+      timezone: 'UTC',
+      capabilities,
+      onCorrect: () => undefined,
+      onLogin,
+    };
+    const view = render(<EntryDetail {...props} token="old" />);
+    const user = userEvent.setup();
+    await user.click(await screen.findByText('Edit public memory details'));
+    await user.type(screen.getByLabelText('City'), 'Portland');
+    await user.click(screen.getByRole('button', { name: 'Save memory details' }));
+    expect(onLogin).toHaveBeenCalledOnce();
+    view.rerender(<EntryDetail {...props} />);
+    expect(screen.getByLabelText('City')).toHaveValue('Portland');
+    view.rerender(<EntryDetail {...props} token="new" />);
+    expect(updateMemory).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole('button', { name: 'Save memory details' }));
+    expect(updateMemory).toHaveBeenLastCalledWith(
+      entry.id,
+      expect.objectContaining({ city: 'Portland' }),
+      0,
+      'new',
+    );
+  });
+
+  it('preserves both versions on conflict and only rebases a draft after an explicit review choice', async () => {
+    vi.mocked(fetchEntry)
+      .mockResolvedValueOnce({ entry, corrections: [] })
+      .mockResolvedValue({
+        entry: { ...entry, metadataVersion: 2, memory: { city: 'Seattle' } },
+        corrections: [],
+      });
+    vi.mocked(updateMemory)
+      .mockRejectedValueOnce(new ApiRequestError('Conflict.', 409))
+      .mockResolvedValueOnce({
+        entry: { ...entry, metadataVersion: 3, memory: { city: 'Portland' } },
+      });
+    const user = userEvent.setup();
+    render(
+      <EntryDetail
+        id={entry.id}
+        timezone="UTC"
+        capabilities={{ metadataEditing: true } as Capabilities}
+        token="token"
+        onCorrect={() => undefined}
+      />,
+    );
+    await user.click(await screen.findByText('Edit public memory details'));
+    await user.type(screen.getByLabelText('City'), 'Portland');
+    await user.click(screen.getByRole('button', { name: 'Save memory details' }));
+    expect(await screen.findByText('Seattle')).toBeInTheDocument();
+    expect(screen.getByLabelText('City')).toHaveValue('Portland');
+    expect(screen.getByRole('button', { name: 'Save memory details' })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: 'Keep my draft for review' }));
+    expect(updateMemory).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole('button', { name: 'Save memory details' }));
+    expect(updateMemory).toHaveBeenLastCalledWith(
+      entry.id,
+      expect.objectContaining({ city: 'Portland' }),
+      2,
+      'token',
+    );
+  });
+
+  it('reconciles an uncertain memory save with the server without submitting it twice', async () => {
+    vi.mocked(fetchEntry)
+      .mockResolvedValueOnce({ entry, corrections: [] })
+      .mockResolvedValue({
+        entry: {
+          ...entry,
+          metadataVersion: 1,
+          memory: { title: 'Friday catch-up', city: 'Portland' },
+        },
+        corrections: [],
+      });
+    vi.mocked(updateMemory).mockRejectedValueOnce(new ApiRequestError('Timeout.', 0, true));
+    const user = userEvent.setup();
+    render(
+      <EntryDetail
+        id={entry.id}
+        timezone="UTC"
+        capabilities={{ metadataEditing: true } as Capabilities}
+        token="token"
+        onCorrect={() => undefined}
+      />,
+    );
+    await user.click(await screen.findByText('Edit public memory details'));
+    await user.type(screen.getByLabelText('City'), 'Portland');
+    await user.click(screen.getByRole('button', { name: 'Save memory details' }));
+    expect(
+      await screen.findByText('The latest saved details match your draft. Save confirmed.'),
+    ).toBeInTheDocument();
+    expect(updateMemory).toHaveBeenCalledOnce();
+  });
+  it('refreshes every loaded history page after a mutation while preserving typed filters', async () => {
+    const second = { ...entry, id: 'entry-2', note: 'Second entry' };
+    vi.mocked(fetchEntries)
+      .mockResolvedValueOnce({ entries: [entry], nextCursor: 'next' })
+      .mockResolvedValueOnce({ entries: [second], nextCursor: null })
+      .mockResolvedValueOnce({ entries: [{ ...entry, totalAmount: 3 }], nextCursor: 'next-new' })
+      .mockResolvedValueOnce({ entries: [second], nextCursor: null });
+    const user = userEvent.setup();
+    const view = render(<HistoryPage query="city=Portland" timezone="UTC" resourceRevision={0} />);
+    await user.click(await screen.findByRole('button', { name: 'Load more records' }));
+    await screen.findByText('2 matching records shown.');
+    await user.type(screen.getByLabelText('Venue'), 'Unsaved filter');
+    view.rerender(<HistoryPage query="city=Portland" timezone="UTC" resourceRevision={1} />);
+    await screen.findByText('+3');
+    expect(screen.getByText('2 matching records shown.')).toBeInTheDocument();
+    expect(screen.getByLabelText('Venue')).toHaveValue('Unsaved filter');
+    expect(fetchEntries).toHaveBeenLastCalledWith('city=Portland&cursor=next-new');
+  });
+
+  it('refreshes recap metrics in place after a new record', async () => {
+    const recap = {
+      period: '2026-10',
+      dateBasis: 'recorded' as const,
+      netTotal: 2,
+      entryCount: 1,
+      participantCount: 1,
+      entries: [entry],
+      nextCursor: null,
+      availableMonths: ['2026-10'],
+    };
+    vi.mocked(fetchRecap)
+      .mockResolvedValueOnce(recap)
+      .mockResolvedValueOnce({ ...recap, netTotal: 4 });
+    vi.mocked(fetchOnThisDate).mockResolvedValue({
+      dateBasis: 'occurred',
+      monthDay: '10-13',
+      entries: [],
+      nextCursor: null,
+    });
+    const view = render(
+      <RecapsPage query="period=2026-10&city=Portland" timezone="UTC" resourceRevision={0} />,
+    );
+    await screen.findByText('2');
+    view.rerender(
+      <RecapsPage query="period=2026-10&city=Portland" timezone="UTC" resourceRevision={1} />,
+    );
+    await screen.findByText('4');
+    expect(screen.getByLabelText('Recap month')).toHaveValue('10');
+    expect(fetchRecap).toHaveBeenLastCalledWith('2026-10', 'period=2026-10&city=Portland');
+  });
+  it('clears a hidden member after a definitive refreshed 404', async () => {
+    vi.mocked(fetchMember)
+      .mockResolvedValueOnce({ member, history: { entries: [entry], nextCursor: null } })
+      .mockRejectedValueOnce(new ApiRequestError('Member not found.', 404));
+    const view = render(<MemberPageView id="sam" timezone="UTC" resourceRevision={0} />);
+    await screen.findByRole('heading', { name: 'Sam' });
+    view.rerender(<MemberPageView id="sam" timezone="UTC" resourceRevision={1} />);
+    await screen.findByText('Member not found.');
+    expect(screen.queryByRole('heading', { name: 'Sam' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Friday catch-up')).not.toBeInTheDocument();
+  });
+
+  it('removes saved metadata on same-version privacy redaction while retaining only typed changes', async () => {
+    const original = {
+      ...entry,
+      memory: { title: 'Old public title', venue: 'Old venue', city: 'Old city' },
+    };
+    vi.mocked(fetchEntry)
+      .mockResolvedValueOnce({ entry: original, corrections: [] })
+      .mockResolvedValueOnce({ entry: { ...original, memory: null }, corrections: [] });
+    const props = {
+      id: entry.id,
+      timezone: 'UTC',
+      token: 'token',
+      capabilities: { metadataEditing: true } as Capabilities,
+      onCorrect: () => undefined,
+    };
+    const view = render(<EntryDetail {...props} resourceRevision={0} />);
+    const user = userEvent.setup();
+    await user.click(await screen.findByText('Edit public memory details'));
+    await user.clear(screen.getByLabelText('City'));
+    await user.type(screen.getByLabelText('City'), 'My unsaved city');
+    view.rerender(<EntryDetail {...props} resourceRevision={1} />);
+    await screen.findByText(/Previously saved text was removed/u);
+    expect(screen.getByLabelText('Title')).toHaveValue('');
+    expect(screen.getByLabelText('Venue')).toHaveValue('');
+    expect(screen.getByLabelText('City')).toHaveValue('My unsaved city');
+    expect(screen.queryByText('Old public title')).not.toBeInTheDocument();
+  });
+
+  it('preserves only authored metadata draft fields while a changed-revision refresh fails', async () => {
+    vi.mocked(fetchEntry)
+      .mockResolvedValueOnce({ entry, corrections: [] })
+      .mockRejectedValueOnce(new Error('Offline now.'));
+    const props = {
+      id: entry.id,
+      timezone: 'UTC',
+      token: 'token',
+      capabilities: { metadataEditing: true } as Capabilities,
+      onCorrect: () => undefined,
+    };
+    const view = render(<EntryDetail {...props} resourceRevision={0} />);
+    const user = userEvent.setup();
+    await user.click(await screen.findByText('Edit public memory details'));
+    await user.type(screen.getByLabelText('City'), 'Unsaved city');
+    view.rerender(<EntryDetail {...props} resourceRevision={1} />);
+    await screen.findByText('Offline now.');
+    expect(screen.getByLabelText('City')).toHaveValue('Unsaved city');
+    expect(screen.getByLabelText('Title')).toHaveValue('');
+    expect(screen.getByRole('button', { name: 'Save memory details' })).toBeDisabled();
+  });
+
+  it('keeps only freshly projected pages when a later refresh page fails', async () => {
+    vi.mocked(fetchEntries)
+      .mockResolvedValueOnce({ entries: [entry], nextCursor: 'next' })
+      .mockResolvedValueOnce({
+        entries: [{ ...entry, id: 'second', memory: { title: 'Old second private detail' } }],
+        nextCursor: null,
+      })
+      .mockResolvedValueOnce({
+        entries: [{ ...entry, note: null, memory: null }],
+        nextCursor: 'new-next',
+      })
+      .mockRejectedValueOnce(new Error('Second refresh page failed.'));
+    const user = userEvent.setup();
+    const view = render(<HistoryPage query="" timezone="UTC" resourceRevision={0} />);
+    await user.click(await screen.findByRole('button', { name: 'Load more records' }));
+    await screen.findByText('Old second private detail');
+    view.rerender(<HistoryPage query="" timezone="UTC" resourceRevision={1} />);
+    await screen.findByText('Second refresh page failed.');
+    expect(screen.queryByText('Old second private detail')).not.toBeInTheDocument();
+    expect(screen.queryByText('Friday catch-up')).not.toBeInTheDocument();
+  });
+  it('clears a saved conflict preview when a later projection is redacted', async () => {
+    vi.mocked(updateMemory).mockRejectedValueOnce(new ApiRequestError('Conflict.', 409));
+    vi.mocked(fetchEntry).mockResolvedValue({
+      entry: { ...entry, metadataVersion: 2, memory: { title: 'Saved conflict title' } },
+      corrections: [],
+    });
+    const props = { token: 'token', onSaved: vi.fn(), onLogin: vi.fn(), initiallyOpen: true };
+    const view = render(<MemoryEditor {...props} entry={entry} />);
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText('City'), 'Draft city');
+    await user.click(screen.getByRole('button', { name: 'Save memory details' }));
+    await screen.findByText('Saved conflict title');
+    view.rerender(
+      <MemoryEditor {...props} entry={{ ...entry, memory: null }} resourceRevision={1} />,
+    );
+    expect(screen.queryByText('Saved conflict title')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Title')).toHaveValue('');
+    expect(screen.getByLabelText('City')).toHaveValue('Draft city');
+    expect(screen.getByRole('button', { name: 'Check latest saved details' })).toBeInTheDocument();
+  });
+
+  it('ignores a late save response after a newer privacy projection', async () => {
+    let finish: ((value: { entry: BeerEntry }) => void) | undefined;
+    vi.mocked(updateMemory).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const onSaved = vi.fn();
+    const props = { token: 'token', onSaved, onLogin: vi.fn(), initiallyOpen: true };
+    const view = render(<MemoryEditor {...props} entry={entry} />);
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText('City'), 'Draft city');
+    await user.click(screen.getByRole('button', { name: 'Save memory details' }));
+    view.rerender(
+      <MemoryEditor {...props} entry={{ ...entry, memory: null }} resourceRevision={1} />,
+    );
+    await act(async () => {
+      finish?.({
+        entry: {
+          ...entry,
+          metadataVersion: 1,
+          memory: { title: 'Late saved title', city: 'Draft city' },
+        },
+      });
+      await Promise.resolve();
+    });
+    expect(onSaved).not.toHaveBeenCalled();
+    expect(screen.getByLabelText('Title')).toHaveValue('');
+    expect(screen.getByLabelText('City')).toHaveValue('Draft city');
   });
 });

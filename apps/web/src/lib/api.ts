@@ -31,8 +31,17 @@ function endpoint(path: string): string {
   return `${API_BASE_URL}${path}`;
 }
 
-async function requestJson<T>(path: string, init: RequestInit = {}): Promise<T> {
+type RequestPurpose = 'read' | 'login' | 'ledger' | 'memory' | 'member';
+
+async function requestJson<T>(
+  path: string,
+  init: RequestInit = {},
+  purpose: RequestPurpose = 'read',
+): Promise<T> {
   const controller = new AbortController();
+  const abort = () => controller.abort();
+  init.signal?.addEventListener('abort', abort, { once: true });
+  if (init.signal?.aborted) controller.abort();
   const timeout = window.setTimeout(() => controller.abort(), 12_000);
   try {
     const response = await fetch(endpoint(path), { ...init, signal: controller.signal });
@@ -46,15 +55,22 @@ async function requestJson<T>(path: string, init: RequestInit = {}): Promise<T> 
   } catch (error) {
     if (error instanceof ApiRequestError) throw error;
     if (error instanceof DOMException && error.name === 'AbortError') {
-      throw new ApiRequestError(
-        'Submission status unknown: the request timed out. Retry the saved attempt to check it.',
-        0,
-        true,
-      );
+      if (init.signal?.aborted) throw error;
+      const messages: Record<RequestPurpose, string> = {
+        read: 'Loading took too long. Try loading this view again.',
+        login: 'Sign-in took too long. Try signing in again.',
+        ledger:
+          'Submission status unknown: the request timed out. Retry the saved attempt to check it.',
+        memory:
+          'The memory save could not be confirmed. Check the latest saved details before retrying.',
+        member: 'Member creation could not be confirmed. Check the directory before trying again.',
+      };
+      throw new ApiRequestError(messages[purpose], 0, true);
     }
     throw new ApiRequestError('Unable to reach the project API.', 0, true);
   } finally {
     window.clearTimeout(timeout);
+    init.signal?.removeEventListener('abort', abort);
   }
 }
 
@@ -63,11 +79,15 @@ export function fetchSummary(): Promise<DashboardSummary> {
 }
 
 export function login(code: string): Promise<EditorSession> {
-  return requestJson<EditorSession>('/api/login', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ code }),
-  });
+  return requestJson<EditorSession>(
+    '/api/login',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code }),
+    },
+    'login',
+  );
 }
 
 export function validateSession(token: string): Promise<{ valid: true; expiresAt: number }> {
@@ -80,48 +100,65 @@ export function submitEvent(
   payload: EventPayload,
   token: string,
 ): Promise<{ total: number; idempotent: boolean }> {
-  return requestJson('/api/events', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
+  return requestJson(
+    '/api/events',
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
     },
-    body: JSON.stringify(payload),
-  });
+    'ledger',
+  );
 }
 
 export function submitEntry(payload: EntryPayload, token: string): Promise<EntryResult> {
-  return requestJson('/api/entries', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
+  return requestJson(
+    '/api/entries',
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
     },
-    body: JSON.stringify(payload),
-  });
+    'ledger',
+  );
 }
 
 export function fetchMembers(query = ''): Promise<MemberPage> {
   return requestJson(`/api/members${query ? `?${query}` : ''}`, { cache: 'no-store' });
 }
 export function createMember(displayName: string, token: string): Promise<{ member: CrewMember }> {
-  return requestJson('/api/members', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ displayName }),
-  });
+  return requestJson(
+    '/api/members',
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ displayName }),
+    },
+    'member',
+  );
 }
 export function fetchMember(id: string): Promise<{ member: CrewMember; history: EntryPage }> {
   return requestJson(`/api/members/${encodeURIComponent(id)}`, { cache: 'no-store' });
 }
-export function fetchEntries(query = ''): Promise<EntryPage> {
-  return requestJson(`/api/entries${query ? `?${query}` : ''}`, { cache: 'no-store' });
+export function fetchEntries(query = '', signal?: AbortSignal): Promise<EntryPage> {
+  return requestJson(`/api/entries${query ? `?${query}` : ''}`, {
+    cache: 'no-store',
+    ...(signal ? { signal } : {}),
+  });
 }
 export function fetchEntry(id: string): Promise<{ entry: BeerEntry; corrections: BeerEntry[] }> {
   return requestJson(`/api/entries/${encodeURIComponent(id)}`, { cache: 'no-store' });
 }
-export function fetchRecap(period: string): Promise<Recap> {
-  return requestJson(`/api/recaps?period=${encodeURIComponent(period)}`, { cache: 'no-store' });
+export function fetchRecap(period: string, query = ''): Promise<Recap> {
+  const params = new URLSearchParams(query);
+  params.set('period', period);
+  return requestJson(`/api/recaps?${params.toString()}`, { cache: 'no-store' });
 }
 export function updateMemory(
   id: string,
@@ -129,11 +166,15 @@ export function updateMemory(
   expectedVersion: number,
   token: string,
 ): Promise<{ entry: BeerEntry }> {
-  return requestJson(`/api/entries/${encodeURIComponent(id)}/memory`, {
-    method: 'PUT',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ memory, expectedVersion }),
-  });
+  return requestJson(
+    `/api/entries/${encodeURIComponent(id)}/memory`,
+    {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memory, expectedVersion }),
+    },
+    'memory',
+  );
 }
 
 export function fetchOnThisDate(

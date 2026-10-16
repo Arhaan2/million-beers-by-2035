@@ -27,6 +27,7 @@ export interface BeerEvent {
 }
 
 export interface BeerAllocation {
+  sourceAllocationId?: string | null;
   memberId?: string | null;
   remainingCorrectable?: number;
   id: string;
@@ -44,6 +45,7 @@ export interface BeerEntry {
   isCorrection: boolean;
   isGroup: boolean;
   allocations: BeerAllocation[];
+  occurrenceSource?: 'provided' | 'unknown';
   occurredAt?: string | null;
   occurrenceTimezone?: string | null;
   occurrencePrecision?: 'day' | 'minute' | null;
@@ -148,10 +150,12 @@ export interface CrewMember {
   lastRecordedAt: number | null;
 }
 export interface EntryPage {
+  revision?: number;
   entries: BeerEntry[];
   nextCursor: string | null;
 }
 export interface MemberPage {
+  revision?: number;
   members: CrewMember[];
   nextCursor: string | null;
 }
@@ -173,4 +177,8 @@ export interface Recap extends EntryPage {
   netTotal: number;
   entryCount: number;
   participantCount: number;
+  availableMonths?: string[];
+  publicPlaceCount?: number;
+  cityCount?: number;
+  breweryCount?: number;
 }

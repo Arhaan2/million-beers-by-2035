@@ -7,54 +7,35 @@ import {
   fetchMember,
   fetchMembers,
   fetchRecap,
-  updateMemory,
 } from '../lib/api';
 import { formatInteger, formatTimestamp } from '../lib/format';
-import type {
-  BeerEntry,
-  Capabilities,
-  DashboardSummary,
-  EntryPage,
-  MemberPage,
-  MemoryMetadata,
-  Recap,
-} from '../lib/types';
+import type { BeerEntry, Capabilities, DashboardSummary, EntryPage, Recap } from '../lib/types';
 import { ActivityFeed } from './ActivityFeed';
 import { ShareActions } from './ShareActions';
+import { MemoryEditor } from './MemoryEditor';
+import { ArchiveExport } from './ArchiveExport';
+import {
+  useCommunityResource as useResource,
+  useCommunityPages,
+} from '../hooks/useCommunityResource';
+import { periodLabel, adjacentPeriod, periodRange, validPeriod } from '../lib/recaps';
 
-function useResource<T>(loader: () => Promise<T>, key: string) {
-  const [attempt, setAttempt] = useState(0);
-  const [state, setState] = useState<{ key: string; data: T | null; error: string | null }>({
-    key,
-    data: null,
-    error: null,
-  });
-  useEffect(() => {
-    let cancelled = false;
-    void loader()
-      .then((data) => {
-        if (!cancelled) setState({ key, data, error: null });
-      })
-      .catch((caught: unknown) => {
-        if (!cancelled)
-          setState({
-            key,
-            data: null,
-            error: caught instanceof Error ? caught.message : 'Unable to load this page.',
-          });
-      });
-    return () => {
-      cancelled = true;
-    };
-    // The route key includes every query input; callers pass inline loaders.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, attempt]);
-  const retry = () => {
-    setState({ key, data: null, error: null });
-    setAttempt((value) => value + 1);
-  };
-  return { ...(state.key === key ? state : { data: null, error: null }), retry };
+type RecordPeople = (participants: { memberId: string; displayName: string }[]) => void;
+function withCursor(query: string, cursor?: string) {
+  if (!cursor) return query;
+  const params = new URLSearchParams(query);
+  params.set('cursor', cursor);
+  return params.toString();
 }
+function mergeEntries<T extends EntryPage>(previous: T, next: T): T {
+  return {
+    ...next,
+    entries: [
+      ...new Map([...previous.entries, ...next.entries].map((entry) => [entry.id, entry])).values(),
+    ],
+  };
+}
+
 function PageStatus({
   error,
   onRetry,
@@ -112,29 +93,29 @@ function PageHeading({
     </div>
   );
 }
-export function CrewPage({ query }: { query: string }) {
+export function CrewPage({
+  query,
+  resourceRevision = 0,
+}: {
+  query: string;
+  resourceRevision?: number;
+}) {
   const search = new URLSearchParams(query);
   const [q, setQ] = useState(search.get('q') ?? '');
-  const result = useResource(() => fetchMembers(query), query);
-  const [extra, setExtra] = useState<MemberPage | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const page = extra ?? result.data;
-  const more = async () => {
-    if (busy || !page?.nextCursor) return;
-    setBusy(true);
-    setError('');
-    try {
-      const params = new URLSearchParams(query);
-      params.set('cursor', page.nextCursor);
-      const next = await fetchMembers(params.toString());
-      setExtra({ members: [...page.members, ...next.members], nextCursor: next.nextCursor });
-    } catch {
-      setError('More members could not be loaded. Try again.');
-    } finally {
-      setBusy(false);
-    }
-  };
+  const { page, busy, error, more, retry } = useCommunityPages(
+    (cursor) => fetchMembers(withCursor(query, cursor)),
+    (previous, next) => ({
+      ...next,
+      members: [
+        ...new Map(
+          [...previous.members, ...next.members].map((member) => [member.id, member]),
+        ).values(),
+      ],
+    }),
+    query,
+    resourceRevision,
+    'More members could not be loaded. Try again.',
+  );
   return (
     <>
       <PageHeading eyebrow="A place for the whole crew" title="People behind the memories">
@@ -213,21 +194,31 @@ export function CrewPage({ query }: { query: string }) {
           ) : null}
         </>
       ) : (
-        <PageStatus error={result.error} onRetry={result.retry} />
+        <PageStatus error={error || null} onRetry={retry} />
       )}
     </>
   );
 }
-export function HistoryPage({ query, timezone }: { query: string; timezone: string }) {
+export function HistoryPage({
+  query,
+  timezone,
+  resourceRevision = 0,
+}: {
+  query: string;
+  timezone: string;
+  resourceRevision?: number;
+}) {
   const params = new URLSearchParams(query);
   const [from, setFrom] = useState(params.get('from') ?? '');
   const [to, setTo] = useState(params.get('to') ?? '');
   const invalidRange = Boolean(from && to && from > to);
-  const result = useResource(() => fetchEntries(query), query);
-  const [extra, setExtra] = useState<EntryPage | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const page = extra ?? result.data;
+  const { page, busy, error, more, retry } = useCommunityPages(
+    (cursor) => fetchEntries(withCursor(query, cursor)),
+    mergeEntries,
+    query,
+    resourceRevision,
+    'More history could not be loaded. Your current results are preserved.',
+  );
   const search = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (invalidRange) return;
@@ -237,27 +228,12 @@ export function HistoryPage({ query, timezone }: { query: string; timezone: stri
       if (typeof value === 'string' && value) next.set(name, value);
     window.location.hash = `/history?${next.toString()}`;
   };
-  const more = async () => {
-    if (busy || !page?.nextCursor) return;
-    setBusy(true);
-    setError('');
-    try {
-      const nextParams = new URLSearchParams(query);
-      nextParams.set('cursor', page.nextCursor);
-      const next = await fetchEntries(nextParams.toString());
-      setExtra({ entries: [...page.entries, ...next.entries], nextCursor: next.nextCursor });
-    } catch {
-      setError('More history could not be loaded. Your current results are preserved.');
-    } finally {
-      setBusy(false);
-    }
-  };
   return (
     <>
       <PageHeading eyebrow="Every entry has a place" title="The shared history">
         <p>
-          Search saved occasions and append-only allocations. Recording dates are always known;
-          occurrence dates appear only when supplied.
+          Search saved entries, public memories and their allocations. Recording dates are always
+          known; occurrence dates appear only when supplied.
         </p>
       </PageHeading>
       <form className="history-filters" onSubmit={search} role="search" aria-label="Shared history">
@@ -309,6 +285,10 @@ export function HistoryPage({ query, timezone }: { query: string; timezone: stri
           Brewery
           <input name="brewery" maxLength={80} defaultValue={params.get('brewery') ?? ''} />
         </label>
+        <label>
+          City
+          <input name="city" maxLength={80} defaultValue={params.get('city') ?? ''} />
+        </label>
         {params.get('community') === 'true' ? (
           <input type="hidden" name="community" value="true" />
         ) : null}
@@ -334,6 +314,7 @@ export function HistoryPage({ query, timezone }: { query: string; timezone: stri
           <a href="#/history">Show everyone</a>
         </p>
       ) : null}
+      <ArchiveExport query={query} resourceRevision={resourceRevision} />
       {page ? (
         <>
           <p className="helper" role="status" aria-atomic="true">
@@ -358,13 +339,23 @@ export function HistoryPage({ query, timezone }: { query: string; timezone: stri
           ) : null}
         </>
       ) : (
-        <PageStatus error={result.error} onRetry={result.retry} />
+        <PageStatus error={error || null} onRetry={retry} />
       )}
     </>
   );
 }
-export function MemberPageView({ id, timezone }: { id: string; timezone: string }) {
-  const result = useResource(() => fetchMember(id), id);
+export function MemberPageView({
+  id,
+  timezone,
+  resourceRevision = 0,
+  onRecord,
+}: {
+  id: string;
+  timezone: string;
+  resourceRevision?: number;
+  onRecord?: RecordPeople;
+}) {
+  const result = useResource(() => fetchMember(id), id, resourceRevision);
   if (!result.data) return <PageStatus error={result.error} onRetry={result.retry} pageTitle />;
   const { member, history } = result.data;
   return (
@@ -389,6 +380,22 @@ export function MemberPageView({ id, timezone }: { id: string; timezone: string 
       {member.aliases.length ? (
         <p className="helper">Display aliases: {member.aliases.join(', ')}</p>
       ) : null}
+      {onRecord ? (
+        <button
+          className="button button--primary"
+          onClick={() => onRecord([{ memberId: member.id, displayName: member.displayName }])}
+        >
+          Record for this member
+        </button>
+      ) : null}
+      {result.error ? (
+        <p role="alert" className="form-error">
+          {result.error}{' '}
+          <button className="text-button" onClick={result.retry}>
+            Refresh member
+          </button>
+        </p>
+      ) : null}
       <ActivityFeed entries={history.entries} timezone={timezone} title="Member history" />
       <a
         className="button button--outline load-more"
@@ -399,108 +406,72 @@ export function MemberPageView({ id, timezone }: { id: string; timezone: string 
     </>
   );
 }
-function MemoryEditor({
-  entry,
-  token,
-  onSaved,
-}: {
-  entry: BeerEntry;
-  token: string;
-  onSaved: (entry: BeerEntry) => void;
-}) {
-  const [memory, setMemory] = useState<MemoryMetadata>(entry.memory ?? {});
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null);
-  const save = async () => {
-    if (busy) return;
-    setBusy(true);
-    setMessage(null);
-    try {
-      const result = await updateMemory(
-        entry.id,
-        { ...memory, visibility: 'public' },
-        entry.metadataVersion ?? 0,
-        token,
-      );
-      onSaved(result.entry);
-      setMessage({
-        text: 'Memory saved. Quantities and recording time are unchanged.',
-        error: false,
-      });
-    } catch (caught) {
-      setMessage({
-        text: caught instanceof Error ? caught.message : 'Memory could not be saved.',
-        error: true,
-      });
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <details className="memory-editor">
-      <summary>Edit public memory details</summary>
-      <p className="helper">
-        The shared crew code authorizes metadata edits. Changes are audited, and never resubmit
-        quantities. Private metadata cannot be retrieved or changed here. Visibility changes require
-        the independently authorized project operator.
-      </p>
-      <form
-        aria-busy={busy}
-        onSubmit={(event) => {
-          event.preventDefault();
-          void save();
-        }}
-      >
-        <div className="metadata-grid">
-          {(['title', 'shortNote', 'venue', 'city', 'beer', 'brewery'] as const).map((field) => (
-            <label key={field}>
-              {field === 'shortNote'
-                ? 'Short note'
-                : field.charAt(0).toUpperCase() + field.slice(1)}
-              <input
-                name={field}
-                maxLength={field === 'shortNote' ? 140 : 80}
-                value={memory[field] ?? ''}
-                readOnly={busy}
-                onChange={(event) => {
-                  setMemory({ ...memory, [field]: event.target.value });
-                  setMessage(null);
-                }}
-              />
-            </label>
-          ))}
-        </div>
-        <button className="button button--outline" disabled={busy}>
-          {busy ? 'Saving…' : 'Save memory details'}
-        </button>
-      </form>
-      <p
-        className={message?.error ? 'form-error' : 'helper'}
-        role={message?.error ? 'alert' : 'status'}
-        aria-atomic="true"
-      >
-        {busy ? 'Saving memory details…' : message?.text}
-      </p>
-    </details>
-  );
-}
 export function EntryDetail({
   id,
   timezone,
   capabilities,
   token,
   onCorrect,
+  resourceRevision = 0,
+  onMutation,
+  onLogin,
+  onRecord,
+  editMemory = false,
 }: {
   id: string;
   timezone: string;
   capabilities?: Capabilities | undefined;
   token?: string | undefined;
   onCorrect: (entry: BeerEntry) => void;
+  resourceRevision?: number;
+  onMutation?: () => void;
+  onLogin?: () => void;
+  onRecord?: RecordPeople;
+  editMemory?: boolean;
 }) {
-  const result = useResource(() => fetchEntry(id), id);
+  const result = useResource(() => fetchEntry(id), id, resourceRevision);
   const [edited, setEdited] = useState<BeerEntry | null>(null);
-  if (!result.data) return <PageStatus error={result.error} onRetry={result.retry} pageTitle />;
-  const entry = edited ?? result.data.entry;
+  const publicEntry = result.data?.entry;
+  const entry = publicEntry
+    ? edited && (edited.metadataVersion ?? 0) > (publicEntry.metadataVersion ?? 0)
+      ? edited
+      : publicEntry
+    : null;
+  const editor = capabilities?.metadataEditing ? (
+    <MemoryEditor
+      key={id}
+      entry={
+        entry ?? {
+          id,
+          totalAmount: 0,
+          createdAt: 0,
+          localDay: '',
+          isCorrection: false,
+          isGroup: false,
+          allocations: [],
+          note: null,
+          memory: null,
+        }
+      }
+      token={token}
+      initiallyOpen={editMemory}
+      available={Boolean(entry)}
+      resourceRevision={resourceRevision}
+      onLogin={onLogin ?? (() => undefined)}
+      onSaved={(saved) => {
+        setEdited(saved);
+        result.retry();
+        onMutation?.();
+      }}
+    />
+  ) : null;
+  if (!entry || !result.data)
+    return (
+      <>
+        <PageStatus error={result.error} onRetry={result.retry} pageTitle />
+        {editor}
+      </>
+    );
   const { corrections } = result.data;
   const memory = entry.memory;
   const occurrence = entry.occurredAt ? new Date(entry.occurredAt) : null;
@@ -573,6 +544,25 @@ export function EntryDetail({
           </ul>
           {entry.note ? <p className="entry-detail-note">{entry.note}</p> : null}
           {memory?.shortNote ? <p>{memory.shortNote}</p> : null}
+          {onRecord &&
+          !entry.isCorrection &&
+          !entry.isSystem &&
+          entry.allocations.length > 0 &&
+          entry.allocations.every((allocation) => allocation.memberId) ? (
+            <button
+              className="button button--primary load-more"
+              onClick={() =>
+                onRecord(
+                  entry.allocations.map((allocation) => ({
+                    memberId: allocation.memberId!,
+                    displayName: allocation.contributor,
+                  })),
+                )
+              }
+            >
+              Use these people
+            </button>
+          ) : null}
           {capabilities?.linkedCorrections &&
           !entry.isCorrection &&
           entry.allocations.some((allocation) => (allocation.remainingCorrectable ?? 0) > 0) ? (
@@ -599,13 +589,17 @@ export function EntryDetail({
             {memory?.venue ? (
               <>
                 <dt>Venue</dt>
-                <dd>{memory.venue}</dd>
+                <dd>
+                  <a href={`#/history?venue=${encodeURIComponent(memory.venue)}`}>{memory.venue}</a>
+                </dd>
               </>
             ) : null}
             {memory?.city ? (
               <>
                 <dt>City</dt>
-                <dd>{memory.city}</dd>
+                <dd>
+                  <a href={`#/history?city=${encodeURIComponent(memory.city)}`}>{memory.city}</a>
+                </dd>
               </>
             ) : null}
             {memory?.beer ? (
@@ -617,16 +611,26 @@ export function EntryDetail({
             {memory?.brewery ? (
               <>
                 <dt>Brewery</dt>
-                <dd>{memory.brewery}</dd>
+                <dd>
+                  <a href={`#/history?brewery=${encodeURIComponent(memory.brewery)}`}>
+                    {memory.brewery}
+                  </a>
+                </dd>
               </>
             ) : null}
           </dl>
           {!memory ? <p className="helper">No public memory details attached.</p> : null}
         </section>
       </div>
-      {token && capabilities?.metadataEditing ? (
-        <MemoryEditor entry={entry} token={token} onSaved={setEdited} />
+      {result.error ? (
+        <p role="alert" className="form-error">
+          {result.error}{' '}
+          <button className="text-button" onClick={result.retry}>
+            Refresh entry
+          </button>
+        </p>
       ) : null}
+      {editor}
       <ShareActions
         data={{
           title: memory?.title ?? 'A moment with the crew',
@@ -650,101 +654,193 @@ export function EntryDetail({
     </>
   );
 }
-export function RecapsPage({ query, timezone }: { query: string; timezone: string }) {
+export function RecapsPage({
+  query,
+  timezone,
+  resourceRevision = 0,
+}: {
+  query: string;
+  timezone: string;
+  resourceRevision?: number;
+}) {
   const [now] = useState(Date.now);
   const current = new Intl.DateTimeFormat('sv-SE', {
     timeZone: timezone,
     year: 'numeric',
     month: '2-digit',
   }).format(now);
-  const period = new URLSearchParams(query).get('period') ?? current;
-  const result = useResource(() => fetchRecap(period), period);
-  const [input, setInput] = useState(period);
-  const [periodTouched, setPeriodTouched] = useState(false);
-  const validPeriod = /^[0-9]{4}(-(0[1-9]|1[0-2]))?$/u.test(input);
+  const requested = new URLSearchParams(query).get('period') ?? current;
+  const valid = validPeriod(requested);
+  const period = valid ? requested : current;
+  const result = useResource(
+    () =>
+      valid
+        ? fetchRecap(period, query)
+        : Promise.reject(
+            new Error(
+              'Choose a valid month or year below. The link contains an invalid recap period.',
+            ),
+          ),
+    query,
+    resourceRevision,
+  );
   const recap = result.data;
+  const years = [
+    ...new Set([
+      current.slice(0, 4),
+      period.slice(0, 4),
+      ...(recap?.availableMonths ?? []).map((month) => month.slice(0, 4)),
+    ]),
+  ]
+    .sort()
+    .reverse();
+  const navigate = (next: string) => {
+    const params = new URLSearchParams(query);
+    params.set('period', next);
+    params.delete('cursor');
+    window.location.hash = `/recaps?${params.toString()}`;
+  };
+  const previous = adjacentPeriod(period, -1);
+  const next = adjacentPeriod(period, 1);
   return (
     <>
       <PageHeading eyebrow="Looking back, together" title="Recaps">
         <p>
-          Monthly and yearly summaries link to their saved records. These use recording dates; they
-          do not claim when a gathering happened.
+          Monthly and yearly summaries use recording dates in {timezone}. They do not claim when an
+          occasion happened.
         </p>
       </PageHeading>
-      <form
-        className="search-bar"
-        onSubmit={(event) => {
-          event.preventDefault();
-          setPeriodTouched(true);
-          if (!validPeriod) return;
-          window.location.hash = `/recaps?period=${encodeURIComponent(input)}`;
-        }}
-      >
-        <label htmlFor="recap-period">Month (YYYY-MM) or year (YYYY)</label>
-        <div>
-          <input
-            id="recap-period"
-            name="period"
-            pattern="[0-9]{4}(-(0[1-9]|1[0-2]))?"
-            placeholder="2026-10"
-            value={input}
-            onChange={(event) => setInput(event.target.value)}
-            onBlur={() => setPeriodTouched(true)}
-            aria-describedby={
-              periodTouched && !validPeriod ? 'recap-period-error' : 'recap-period-hint'
+      <div className="recap-controls panel" role="group" aria-label="Choose recap period">
+        <label>
+          Year
+          <select
+            aria-label="Recap year"
+            value={period.slice(0, 4)}
+            onChange={(event) =>
+              navigate(event.target.value + (period.length === 7 ? period.slice(4) : ''))
             }
-            aria-invalid={(periodTouched && !validPeriod) || undefined}
-            maxLength={7}
-            required
-          />
-          <button className="button button--primary">View recap</button>
+          >
+            {years.map((year) => (
+              <option key={year}>{year}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Month
+          <select
+            aria-label="Recap month"
+            value={period.slice(5) || 'all'}
+            onChange={(event) =>
+              navigate(
+                period.slice(0, 4) + (event.target.value === 'all' ? '' : `-${event.target.value}`),
+              )
+            }
+          >
+            <option value="all">Whole year</option>
+            {Array.from({ length: 12 }, (_, index) => {
+              const month = String(index + 1).padStart(2, '0');
+              return (
+                <option key={month} value={month}>
+                  {new Intl.DateTimeFormat('en-US', { month: 'long', timeZone: 'UTC' }).format(
+                    new Date(`2000-${month}-01T12:00:00Z`),
+                  )}
+                </option>
+              );
+            })}
+          </select>
+        </label>
+        <div className="button-row">
+          <button
+            className="button button--outline"
+            disabled={!previous}
+            onClick={() => previous && navigate(previous)}
+          >
+            ← Previous {period.length === 4 ? 'year' : 'month'}
+          </button>
+          <button
+            className="button button--outline"
+            disabled={!next}
+            onClick={() => next && navigate(next)}
+          >
+            Next {period.length === 4 ? 'year' : 'month'} →
+          </button>
         </div>
-        {periodTouched && !validPeriod ? (
-          <p className="form-error" id="recap-period-error" role="alert">
-            Enter a year such as 2026, or a month such as 2026-10.
+        {!valid ? (
+          <button className="text-button" onClick={() => navigate(current)}>
+            Open the current month
+          </button>
+        ) : null}
+      </div>
+      {recap?.availableMonths?.length ? (
+        <nav className="archive-months" aria-label="Months with saved records">
+          <label>
+            Jump to a recorded month
+            <select
+              aria-label="Jump to a recorded month"
+              value={recap.availableMonths.includes(period) ? period : ''}
+              onChange={(event) => {
+                if (event.target.value) navigate(event.target.value);
+              }}
+            >
+              <option value="" disabled>
+                Choose a month with records
+              </option>
+              {recap.availableMonths.map((month) => (
+                <option key={month} value={month}>
+                  {periodLabel(month)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <p className="helper">
+            {recap.availableMonths.length} months with matching community records.
           </p>
-        ) : (
-          <p className="helper" id="recap-period-hint">
-            Enter a year for an annual recap, or add a month for a closer look.
-          </p>
-        )}
-      </form>
+        </nav>
+      ) : recap?.availableMonths ? (
+        <p className="notice">No recorded months match these filters yet.</p>
+      ) : null}
       {recap ? (
-        <RecapContent recap={recap} timezone={timezone} />
+        <>
+          <RecapContent
+            recap={recap}
+            timezone={timezone}
+            query={query}
+            resourceRevision={resourceRevision}
+          />
+          {result.error ? (
+            <p role="alert">
+              {result.error}{' '}
+              <button className="text-button" onClick={result.retry}>
+                Refresh recap
+              </button>
+            </p>
+          ) : null}
+        </>
       ) : (
         <PageStatus error={result.error} onRetry={result.retry} />
       )}
     </>
   );
 }
-function OnThisDate({ timezone }: { timezone: string }) {
-  const result = useResource(() => fetchOnThisDate(), 'on-this-date');
-  const [extra, setExtra] = useState<
-    (EntryPage & { dateBasis: 'occurred'; monthDay: string }) | null
-  >(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const page = extra ?? result.data;
-  const more = async () => {
-    if (busy || !page?.nextCursor) return;
-    setBusy(true);
-    setError('');
-    try {
-      const next = await fetchOnThisDate(
-        new URLSearchParams({ monthDay: page.monthDay, cursor: page.nextCursor }).toString(),
-      );
-      setExtra({ ...next, entries: [...page.entries, ...next.entries] });
-    } catch {
-      setError('More memories could not be loaded. Try again.');
-    } finally {
-      setBusy(false);
-    }
-  };
+function OnThisDate({
+  timezone,
+  resourceRevision,
+}: {
+  timezone: string;
+  resourceRevision: number;
+}) {
+  const { page, busy, error, more, retry } = useCommunityPages(
+    (cursor) => fetchOnThisDate(withCursor('', cursor)),
+    mergeEntries,
+    'on-this-date',
+    resourceRevision,
+    'More memories could not be loaded. Try again.',
+  );
   if (!page)
-    return result.error ? (
+    return error ? (
       <div className="notice">
         <p role="alert">On-this-date memories are temporarily unavailable.</p>
-        <button className="button button--quiet" onClick={result.retry}>
+        <button className="button button--quiet" onClick={retry}>
           Try loading memories again
         </button>
       </div>
@@ -798,22 +894,29 @@ function OnThisDate({ timezone }: { timezone: string }) {
     </section>
   );
 }
-function RecapContent({ recap, timezone }: { recap: Recap; timezone: string }) {
-  const from = recap.period.length === 4 ? `${recap.period}-01-01` : `${recap.period}-01`;
-  const end = new Date(`${from}T12:00:00Z`);
-  if (recap.period.length === 4) end.setUTCFullYear(end.getUTCFullYear() + 1);
-  else end.setUTCMonth(end.getUTCMonth() + 1);
-  end.setUTCDate(end.getUTCDate() - 1);
-  const query = new URLSearchParams({
-    from,
-    to: end.toISOString().slice(0, 10),
-    dateBasis: 'recorded',
-    community: 'true',
-  });
+function RecapContent({
+  recap,
+  timezone,
+  query: selectedQuery,
+  resourceRevision,
+}: {
+  recap: Recap;
+  timezone: string;
+  query: string;
+  resourceRevision: number;
+}) {
+  const range = periodRange(recap.period);
+  const query = new URLSearchParams(selectedQuery);
+  query.delete('period');
+  query.delete('cursor');
+  query.set('from', range.from);
+  query.set('to', range.to);
+  query.set('dateBasis', 'recorded');
+  query.set('community', 'true');
   return (
     <>
       <div className="recap-hero panel">
-        <p className="eyebrow">Recorded in {recap.period}</p>
+        <p className="eyebrow">Recorded in {periodLabel(recap.period)}</p>
         <h3>A chapter in the shared ledger.</h3>
         <div className="metric-strip">
           <div>
@@ -822,30 +925,48 @@ function RecapContent({ recap, timezone }: { recap: Recap; timezone: string }) {
           </div>
           <div>
             <strong>{formatInteger(recap.participantCount)}</strong>
-            <span>Named participants</span>
+            <span>Participating named member records</span>
           </div>
           <div>
             <strong>{formatInteger(recap.netTotal)}</strong>
             <span>Net community amount</span>
           </div>
         </div>
+        {typeof recap.publicPlaceCount === 'number' ? (
+          <p className="helper">
+            {formatInteger(recap.publicPlaceCount)} public venue/city combinations ·{' '}
+            {formatInteger(recap.cityCount ?? 0)} cities · {formatInteger(recap.breweryCount ?? 0)}{' '}
+            breweries represented in the complete selection.
+          </p>
+        ) : null}
+        <p className="helper">
+          Entries are saved submissions, not verified distinct gatherings. Named member records are
+          not verified people. Corrections are included in the net amount.
+        </p>
+        {!recap.entryCount ? (
+          <p className="notice">
+            No community entries match this period and these filters. Choose another month or clear
+            the history filters.
+          </p>
+        ) : null}
         <a className="button button--outline" href={`#/history?${query.toString()}`}>
           Explore contributing records →
         </a>
       </div>
       <ShareActions
         data={{
-          title: `The ${recap.period} recap`,
+          title: `The ${periodLabel(recap.period)} recap`,
           subtitle: 'Community activity · by recording date',
           lines: [
-            `${recap.entryCount} entries · ${recap.participantCount} named participants`,
+            `${recap.entryCount} entries · ${recap.participantCount} named member records`,
             `${recap.netTotal} net recorded`,
           ],
           url: window.location.href,
         }}
       />
       <ActivityFeed entries={recap.entries} timezone={timezone} title="Records in this recap" />
-      <OnThisDate timezone={timezone} />
+      <ArchiveExport query={query.toString()} resourceRevision={resourceRevision} />
+      <OnThisDate timezone={timezone} resourceRevision={resourceRevision} />
     </>
   );
 }
@@ -903,6 +1024,9 @@ export function AboutPage({ summary }: { summary: DashboardSummary | null }) {
             upload or individual invitation system is enabled in this release.
           </p>
           <h3>Partners & the community story</h3>
+          <p>
+            <a href="#/partners">Explore possible collaborations →</a>
+          </p>
           <p>
             This page uses real project records. No sponsors, testimonials, audience reach or
             demographic claims are implied.
