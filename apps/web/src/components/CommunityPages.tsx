@@ -1052,8 +1052,8 @@ export function AboutPage({ summary }: { summary: DashboardSummary | null }) {
             demographic claims are implied.
           </p>
           <p>
-            For partnerships or questions, email{' '}
-            <a href="mailto:arhaanaggarwal@gmail.com">arhaanaggarwal@gmail.com</a>.
+            For partnerships or questions, <a href="#/partners">Explore project partnerships</a> or
+            contact <a href="mailto:arhaanaggarwal@gmail.com">arhaanaggarwal@gmail.com</a>.
           </p>
           <a
             href="https://github.com/Arhaan2/million-beers-by-2035"

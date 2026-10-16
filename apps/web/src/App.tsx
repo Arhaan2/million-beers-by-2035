@@ -10,6 +10,8 @@ import {
   RecapsPage,
 } from './components/CommunityPages';
 import { DashboardHeader } from './components/DashboardHeader';
+import { InstallGuidance } from './components/InstallGuidance';
+import { PartnersPage, ProjectShare } from './components/PartnersPage';
 import { Leaderboard } from './components/Leaderboard';
 import { LoginModal } from './components/LoginModal';
 import { ProgressDisplay } from './components/ProgressDisplay';
@@ -18,8 +20,6 @@ import { Toast } from './components/Toast';
 import { TrendChart } from './components/TrendChart';
 import { UpdateModal } from './components/UpdateModal';
 import type { RecordingParticipant } from './components/UpdateModal';
-import { PartnersPage, ProjectShare } from './components/PartnersPage';
-import { InstallGuidance } from './components/InstallGuidance';
 import { useDashboard } from './hooks/useDashboard';
 import {
   averagePerElapsedDay,
@@ -359,10 +359,10 @@ function App() {
               </button>
             </p>
           ) : null}
-          {section === 'about' ? (
-            <AboutPage summary={summary} />
-          ) : section === 'partners' && summary ? (
+          {section === 'partners' ? (
             <PartnersPage summary={summary} lastSuccessAt={lastSuccessAt} />
+          ) : section === 'about' ? (
+            <AboutPage summary={summary} />
           ) : !supported && summary ? (
             <div className="page-status">
               <h2 id="page-title" tabIndex={-1}>
@@ -567,11 +567,11 @@ function App() {
                     detail="At the historical group rate; not a prediction"
                   />
                 </div>
+                <ProjectShare summary={summary} lastSuccessAt={lastSuccessAt} />
                 <div className="secondary-ledger">
                   <Leaderboard entries={summary.leaderboard} />
                   <MilestoneHistory revision={summary.revision ?? 0} />
                 </div>
-                <ProjectShare summary={summary} lastSuccessAt={lastSuccessAt} />
               </details>
             </>
           ) : (
@@ -603,6 +603,7 @@ function App() {
             For adults of legal drinking age. Track responsibly. This counter is not a drinking
             recommendation. Never drink and drive.
           </p>
+          <a href="#/partners">Project partnerships</a>
           <a
             href="https://github.com/Arhaan2/million-beers-by-2035"
             target="_blank"
@@ -610,7 +611,6 @@ function App() {
           >
             View the source on GitHub ↗
           </a>
-          <a href="#/partners">Project & partnerships</a>
         </footer>
       </div>
       <LoginModal
