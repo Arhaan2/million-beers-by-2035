@@ -266,6 +266,62 @@ export function saveGroup(group: SavedGroup): boolean {
     return false;
   }
 }
+export function renameGroup(name: string, nextName: string): boolean {
+  const cleanName = nextName.trim().slice(0, 40);
+  const groups = readGroups();
+  if (
+    !cleanName ||
+    name === 'Last group' ||
+    cleanName === 'Last group' ||
+    !groups.some((group) => group.name === name) ||
+    groups.some((group) => group.name === cleanName && group.name !== name)
+  )
+    return false;
+  try {
+    localStorage.setItem(
+      GROUP_KEY,
+      JSON.stringify(
+        groups.map((group) => (group.name === name ? { ...group, name: cleanName } : group)),
+      ),
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+export function deleteGroup(name: string): boolean {
+  if (name === 'Last group') return false;
+  try {
+    localStorage.setItem(
+      GROUP_KEY,
+      JSON.stringify(readGroups().filter((group) => group.name !== name)),
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const DEFAULT_PARTICIPANT_KEY = 'million-beers:v1:default-participant';
+export function readDefaultParticipant(): SavedGroup['people'][number] | null {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(DEFAULT_PARTICIPANT_KEY) ?? 'null');
+    return personRecord(value) && record(value) && typeof value.memberId === 'string'
+      ? { contributor: String(value.contributor), memberId: value.memberId }
+      : null;
+  } catch {
+    return null;
+  }
+}
+export function saveDefaultParticipant(person: SavedGroup['people'][number] | null): boolean {
+  try {
+    if (person?.memberId) localStorage.setItem(DEFAULT_PARTICIPANT_KEY, JSON.stringify(person));
+    else localStorage.removeItem(DEFAULT_PARTICIPANT_KEY);
+    return true;
+  } catch {
+    return false;
+  }
+}
 export async function withDraftLock<T>(
   task: () => Promise<T>,
   exactSavedRetry = false,

@@ -263,7 +263,10 @@ function decodeCursor(value: string | null): [number, string] | null {
     throw new ApiError(400, 'Invalid history cursor.', 'invalid_cursor');
   }
 }
-function historyFilter(params: URLSearchParams): { where: string; values: (string | number)[] } {
+function historyFilter(
+  params: URLSearchParams,
+  includeCursor = true,
+): { where: string; values: (string | number)[] } {
   const clauses = ['1 = 1'];
   const values: (string | number)[] = [];
   const memberId = boundedQuery(params.get('memberId'), 256);
@@ -289,7 +292,7 @@ function historyFilter(params: URLSearchParams): { where: string; values: (strin
     clauses.push(`${dateColumn} <= ?`);
     values.push(to);
   }
-  for (const key of ['q', 'venue', 'brewery'] as const) {
+  for (const key of ['q', 'venue', 'brewery', 'city'] as const) {
     const text = boundedQuery(params.get(key));
     if (!text) continue;
     clauses.push(`(${publicTextCondition})`);
@@ -304,42 +307,83 @@ function historyFilter(params: URLSearchParams): { where: string; values: (strin
     clauses.push(
       'NOT EXISTS (SELECT 1 FROM entry_classification cl WHERE cl.entry_id = e.id AND cl.is_system = 1)',
     );
-  const cursor = decodeCursor(params.get('cursor'));
+  const cursor = includeCursor ? decodeCursor(params.get('cursor')) : null;
   if (cursor) {
     clauses.push('(e.created_at < ? OR (e.created_at = ? AND e.id < ?))');
     values.push(cursor[0], cursor[0], cursor[1]);
   }
   return { where: clauses.join(' AND '), values };
 }
-export async function history(database: Database, params: URLSearchParams) {
-  const limit = positiveLimit(params);
-  const { where, values } = historyFilter(params);
-  const result = await publicEntriesStatement(
-    database,
-    where,
-    values,
-    limit + 1,
-  ).all<PublicEntryRow>();
-  const all = groupPublicEntries(result.results);
+function revisionStatement(database: Database) {
+  return database.prepare('SELECT revision FROM upgrade_state WHERE id = 1');
+}
+
+function checkedRevision(
+  row: { revision?: unknown } | undefined,
+  params?: URLSearchParams,
+): number {
+  const revision = row?.revision;
+  if (typeof revision !== 'number' || !Number.isSafeInteger(revision) || revision < 0)
+    throw new ApiError(503, 'The archive revision is unavailable.', 'schema_not_ready');
+  const expected = params?.get('revision');
+  if (expected !== null && expected !== undefined) {
+    if (!/^\d+$/u.test(expected) || !Number.isSafeInteger(Number(expected)))
+      throw new ApiError(400, 'Revision must be a nonnegative safe integer.', 'invalid_query');
+    if (Number(expected) !== revision)
+      throw new ApiError(
+        409,
+        'The public archive changed. Restart the export to use current records and privacy settings.',
+        'archive_changed',
+      );
+  }
+  return revision;
+}
+
+function historyPage(rows: PublicEntryRow[], limit: number, revision: number) {
+  const all = groupPublicEntries(rows);
   const entries = all.slice(0, limit);
   const last = entries.at(-1);
   return {
+    revision,
     entries,
     nextCursor: all.length > limit && last ? btoa(JSON.stringify([last.createdAt, last.id])) : null,
   };
 }
+
+export async function history(database: Database, params: URLSearchParams) {
+  const limit = positiveLimit(params);
+  const { where, values } = historyFilter(params);
+  // D1 batches execute as one transaction: every page and its revision observe
+  // the same privacy projection. No historical/private snapshot is retained.
+  const results = await database.batch<Record<string, unknown>>([
+    revisionStatement(database),
+    publicEntriesStatement(database, where, values, limit + 1),
+  ]);
+  const revision = checkedRevision(results[0]?.results[0], params);
+  return historyPage((results[1]?.results ?? []) as PublicEntryRow[], limit, revision);
+}
 export async function entryDetails(database: Database, id: string) {
-  const entry = await publicEntry(database, id);
-  const rows = await publicEntriesStatement(
-    database,
-    'EXISTS (SELECT 1 FROM entry_corrections c WHERE c.entry_id = e.id AND c.source_entry_id = ?)',
-    [id],
-    250,
-  ).all<PublicEntryRow>();
-  return { entry, corrections: groupPublicEntries(rows.results) };
+  const results = await database.batch<Record<string, unknown>>([
+    revisionStatement(database),
+    publicEntriesStatement(database, 'e.id = ?', [id], 1),
+    publicEntriesStatement(
+      database,
+      'EXISTS (SELECT 1 FROM entry_corrections c WHERE c.entry_id = e.id AND c.source_entry_id = ?)',
+      [id],
+      250,
+    ),
+  ]);
+  const entry = groupPublicEntries((results[1]?.results ?? []) as PublicEntryRow[])[0];
+  if (!entry) throw new ApiError(404, 'Entry not found.', 'not_found');
+  return {
+    revision: checkedRevision(results[0]?.results[0]),
+    entry,
+    corrections: groupPublicEntries((results[2]?.results ?? []) as PublicEntryRow[]),
+  };
 }
 
 interface MemberRow {
+  [key: string]: unknown;
   id: string;
   display_name: string;
   allocation_count: number;
@@ -379,14 +423,18 @@ export async function members(database: Database, params: URLSearchParams) {
     clauses.push('m.id > ?');
     values.push(cursor);
   }
-  const result = await database
-    .prepare(`${memberSelect} WHERE ${clauses.join(' AND ')} ORDER BY m.id LIMIT ?`)
-    .bind(...values, limit + 1)
-    .all<MemberRow>();
-  const list = result.results.slice(0, limit);
+  const results = await database.batch<Record<string, unknown>>([
+    revisionStatement(database),
+    database
+      .prepare(`${memberSelect} WHERE ${clauses.join(' AND ')} ORDER BY m.id LIMIT ?`)
+      .bind(...values, limit + 1),
+  ]);
+  const rows = (results[1]?.results ?? []) as MemberRow[];
+  const list = rows.slice(0, limit);
   return {
+    revision: checkedRevision(results[0]?.results[0]),
     members: list.map(publicMember),
-    nextCursor: result.results.length > limit ? (list.at(-1)?.id ?? null) : null,
+    nextCursor: rows.length > limit ? (list.at(-1)?.id ?? null) : null,
   };
 }
 export async function memberDetails(
@@ -394,13 +442,23 @@ export async function memberDetails(
   id: string,
   params = new URLSearchParams(),
 ) {
-  const row = await database
-    .prepare(`${memberSelect} WHERE m.id = ? AND m.public_display = 1`)
-    .bind(id)
-    .first<MemberRow>();
+  const filters = new URLSearchParams(params);
+  filters.set('memberId', id);
+  const limit = positiveLimit(filters);
+  const { where, values } = historyFilter(filters);
+  const results = await database.batch<Record<string, unknown>>([
+    revisionStatement(database),
+    database.prepare(`${memberSelect} WHERE m.id = ? AND m.public_display = 1`).bind(id),
+    publicEntriesStatement(database, where, values, limit + 1),
+  ]);
+  const row = results[1]?.results[0] as MemberRow | undefined;
   if (!row) throw new ApiError(404, 'Member not found.', 'not_found');
-  params.set('memberId', id);
-  return { member: publicMember(row), history: await history(database, params) };
+  const revision = checkedRevision(results[0]?.results[0], params);
+  return {
+    revision,
+    member: publicMember(row),
+    history: historyPage((results[2]?.results ?? []) as PublicEntryRow[], limit, revision),
+  };
 }
 export async function createMember(database: Database, value: unknown, actor: string) {
   await requireUpgradeWrites(database);
@@ -451,7 +509,8 @@ export async function createMember(database: Database, value: unknown, actor: st
       );
     throw new ApiError(500, 'Unable to create member.', 'database_write_failed');
   }
-  return { member: (await memberDetails(database, id)).member };
+  const result = await memberDetails(database, id);
+  return { member: result.member, revision: result.revision };
 }
 
 export async function recaps(
@@ -468,45 +527,65 @@ export async function recaps(
   const period =
     params.get('period') ??
     `${parts.find((p) => p.type === 'year')?.value}-${parts.find((p) => p.type === 'month')?.value}`;
-  if (!/^\d{4}(?:-(?:0[1-9]|1[0-2]))?$/u.test(period))
-    throw new ApiError(400, 'Recap period must be YYYY or YYYY-MM.', 'invalid_query');
+  if (!/^(?!0000)\d{4}(?:-(?:0[1-9]|1[0-2]))?$/u.test(period))
+    throw new ApiError(
+      400,
+      'Recap period must be YYYY or YYYY-MM, from year 0001 through 9999.',
+      'invalid_query',
+    );
   const start = `${period.length === 4 ? `${period}-01` : period}-01`;
   day(start);
-  const endDate = new Date(start);
-  if (period.length === 4) endDate.setUTCFullYear(endDate.getUTCFullYear() + 1);
-  else endDate.setUTCMonth(endDate.getUTCMonth() + 1);
-  endDate.setUTCDate(endDate.getUTCDate() - 1);
-  const end = endDate.toISOString().slice(0, 10);
+  const year = Number(period.slice(0, 4));
+  const month = Number(period.slice(5));
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const monthDays = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  const end = period.length === 4 ? `${period}-12-31` : `${period}-${monthDays[month - 1]}`;
+  params = new URLSearchParams(params);
   params.set('from', start);
   params.set('to', end);
   params.set('dateBasis', 'recorded');
   params.set('community', 'true');
   const limit = positiveLimit(params);
   const filter = historyFilter(params);
+  const aggregate = historyFilter(params, false);
+  const monthParams = new URLSearchParams(params);
+  monthParams.delete('from');
+  monthParams.delete('to');
+  const months = historyFilter(monthParams, false);
+  const selected = `FROM beer_entries e LEFT JOIN entry_metadata m ON m.entry_id = e.id WHERE ${aggregate.where}`;
   const results = await database.batch<Record<string, unknown>>([
+    revisionStatement(database),
     database
       .prepare(
-        `SELECT coalesce(SUM(e.total_amount), 0) AS netTotal, COUNT(*) AS entryCount FROM beer_entries e WHERE e.local_day >= ? AND e.local_day <= ? AND NOT EXISTS (SELECT 1 FROM entry_classification cl WHERE cl.entry_id = e.id AND cl.is_system = 1)`,
+        `SELECT coalesce(SUM(e.total_amount), 0) AS netTotal, COUNT(*) AS entryCount,
+        COUNT(DISTINCT CASE WHEN ${publicTextCondition} AND m.venue IS NOT NULL THEN json_array(lower(trim(m.venue)), lower(trim(coalesce(m.city, '')))) END) AS publicPlaceCount,
+        COUNT(DISTINCT CASE WHEN ${publicTextCondition} THEN lower(trim(m.city)) END) AS cityCount,
+        COUNT(DISTINCT CASE WHEN ${publicTextCondition} THEN lower(trim(m.brewery)) END) AS breweryCount ${selected}`,
       )
-      .bind(start, end),
+      .bind(...aggregate.values),
     database
       .prepare(
-        `SELECT COUNT(DISTINCT am.member_id) AS participantCount FROM beer_entries e JOIN beer_events a ON a.entry_id = e.id JOIN allocation_members am ON am.allocation_id = a.id JOIN crew_members cm ON cm.id = am.member_id WHERE e.local_day >= ? AND e.local_day <= ? AND a.amount > 0 AND cm.public_display = 1 AND NOT EXISTS (SELECT 1 FROM entry_classification cl WHERE cl.entry_id = e.id AND cl.is_system = 1)`,
+        `SELECT COUNT(DISTINCT am.member_id) AS participantCount FROM beer_events a
+        JOIN allocation_members am ON am.allocation_id = a.id JOIN crew_members cm ON cm.id = am.member_id
+        WHERE a.amount > 0 AND cm.public_display = 1 AND a.entry_id IN (SELECT e.id ${selected})`,
       )
-      .bind(start, end),
+      .bind(...aggregate.values),
     publicEntriesStatement(database, filter.where, filter.values, limit + 1),
+    database
+      .prepare(
+        `SELECT DISTINCT substr(e.local_day, 1, 7) AS month FROM beer_entries e
+      LEFT JOIN entry_metadata m ON m.entry_id = e.id WHERE ${months.where} ORDER BY month DESC`,
+      )
+      .bind(...months.values),
   ]);
-  const page = groupPublicEntries((results[2]?.results ?? []) as PublicEntryRow[]);
-  const entries = page.slice(0, limit);
-  const last = entries.at(-1);
+  const revision = checkedRevision(results[0]?.results[0], params);
   return {
     period,
     dateBasis: 'recorded' as const,
-    ...results[0]?.results[0],
     ...results[1]?.results[0],
-    entries,
-    nextCursor:
-      page.length > limit && last ? btoa(JSON.stringify([last.createdAt, last.id])) : null,
+    ...results[2]?.results[0],
+    ...historyPage((results[3]?.results ?? []) as PublicEntryRow[], limit, revision),
+    availableMonths: (results[4]?.results ?? []).map((row) => String(row.month)),
   };
 }
 
@@ -530,21 +609,15 @@ export async function onThisDate(database: Database, params: URLSearchParams, ti
     where += ' AND (e.created_at < ? OR (e.created_at = ? AND e.id < ?))';
     values.push(cursor[0], cursor[0], cursor[1]);
   }
-  const rows = await publicEntriesStatement(
-    database,
-    where,
-    values,
-    limit + 1,
-  ).all<PublicEntryRow>();
-  const page = groupPublicEntries(rows.results);
-  const entries = page.slice(0, limit);
-  const last = entries.at(-1);
+  const results = await database.batch<Record<string, unknown>>([
+    revisionStatement(database),
+    publicEntriesStatement(database, where, values, limit + 1),
+  ]);
+  const revision = checkedRevision(results[0]?.results[0], params);
   return {
     dateBasis: 'occurred' as const,
     monthDay,
-    entries,
-    nextCursor:
-      page.length > limit && last ? btoa(JSON.stringify([last.createdAt, last.id])) : null,
+    ...historyPage((results[1]?.results ?? []) as PublicEntryRow[], limit, revision),
   };
 }
 
@@ -599,7 +672,8 @@ export async function editMemory(database: Database, id: string, value: unknown,
   ]);
   if (!result[1]?.results.length)
     throw new ApiError(409, 'This memory changed. Refresh it before editing.', 'metadata_conflict');
-  return { entry: await publicEntry(database, id) };
+  const resultEntry = await entryDetails(database, id);
+  return { entry: resultEntry.entry, revision: resultEntry.revision };
 }
 export function memoryValues(memory?: MemoryInput | null): (string | null)[] {
   return [

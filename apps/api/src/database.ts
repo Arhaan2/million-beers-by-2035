@@ -149,9 +149,11 @@ async function existingEntryResult(
       'idempotency_conflict',
     );
   }
+  const state = await readState(database);
   return {
     entry: await publicEntry(database, existing.row.id),
-    stats: publicStats(env, await readState(database)),
+    stats: publicStats(env, state),
+    revision: state.revision,
     idempotent: true,
   };
 }
@@ -161,11 +163,15 @@ export async function createBeerEntry(
   input: EntryInput,
   sessionFingerprint: string,
   nowMs = Date.now(),
+  beforeWrite?: () => Promise<void>,
 ): Promise<CreateEntryResult> {
   const database = env.DB.withSession('first-primary');
   const originalInput = input;
   const existing = await readEntryByIdempotency(database, input.idempotencyKey);
   if (existing) return existingEntryResult(env, existing, input, database);
+  // A confirmed exact retry is a read of an accepted ledger transaction. Its
+  // recovery must remain possible even after either mutation budget is spent.
+  await beforeWrite?.();
   if (hasExtendedInput(input)) await requireUpgradeWrites(database);
   input = await resolveAllocations(database, input);
 
@@ -352,6 +358,7 @@ export async function recordEvent(
   input: EventInput,
   sessionFingerprint: string,
   nowMs = Date.now(),
+  beforeWrite?: () => Promise<void>,
 ): Promise<RecordEventResult> {
   const result = await createBeerEntry(
     env,
@@ -369,6 +376,7 @@ export async function recordEvent(
     },
     sessionFingerprint,
     nowMs,
+    beforeWrite,
   );
   const allocation = result.entry.allocations[0];
   if (!allocation)

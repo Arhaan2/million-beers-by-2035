@@ -66,36 +66,70 @@ async function handleSession(
   return jsonResponse({ valid: true, expiresAt: session.exp }, context);
 }
 
-async function authorizeMutation(request: Request, env: Env): Promise<string> {
+async function authenticateMutation(request: Request, env: Env) {
   assertAllowedBrowserOrigin(request, env);
   const session = await requireEditorSession(request, env);
-  const mutationKey = await stableHash(
-    `${clientAddress(request)}:${session.jti}`,
-    env.RATE_LIMIT_SALT,
-  );
-  const limit = await consumeRateLimit(
-    env.DB,
-    'mutation',
-    mutationKey,
-    positiveInteger(env.MUTATION_RATE_LIMIT_MAX, 30),
-    positiveInteger(env.MUTATION_RATE_LIMIT_WINDOW_SECONDS, 600),
-  );
-  if (!limit.allowed)
-    throw new ApiError(429, 'Too many updates. Try again later.', 'mutation_limited');
-  return stableHash(session.jti, env.RATE_LIMIT_SALT);
+  return {
+    fingerprint: await stableHash(session.jti, env.RATE_LIMIT_SALT),
+    consume: async () => {
+      const maximum = positiveInteger(env.MUTATION_RATE_LIMIT_MAX, 30);
+      const windowSeconds = positiveInteger(env.MUTATION_RATE_LIMIT_WINDOW_SECONDS, 600);
+      const mutationKey = await stableHash(
+        `${clientAddress(request)}:${session.jti}`,
+        env.RATE_LIMIT_SALT,
+      );
+      const sessionLimit = await consumeRateLimit(
+        env.DB,
+        'mutation',
+        mutationKey,
+        maximum,
+        windowSeconds,
+      );
+      if (!sessionLimit.allowed)
+        throw new ApiError(429, 'Too many updates. Try again later.', 'mutation_limited');
+      // Ten ordinary session budgets leave room for friends sharing a network.
+      // This salted network bucket survives re-login; it is not personal identity.
+      const networkKey = await stableHash(clientAddress(request), env.RATE_LIMIT_SALT);
+      const networkLimit = await consumeRateLimit(
+        env.DB,
+        'mutation_network',
+        networkKey,
+        maximum * 10,
+        windowSeconds,
+      );
+      if (!networkLimit.allowed)
+        throw new ApiError(
+          429,
+          'Too many updates from this network. Wait before trying again.',
+          'mutation_limited',
+        );
+    },
+  };
+}
+
+async function authorizeMutation(request: Request, env: Env): Promise<string> {
+  const mutation = await authenticateMutation(request, env);
+  await mutation.consume();
+  return mutation.fingerprint;
 }
 
 async function handleEvent(request: Request, env: Env, context: RequestContext): Promise<Response> {
-  const sessionFingerprint = await authorizeMutation(request, env);
+  const mutation = await authenticateMutation(request, env);
   const input = parseEventBody(await readJsonBody(request));
-  const result = await recordEvent(env, input, sessionFingerprint);
+  const result = await recordEvent(env, input, mutation.fingerprint, Date.now(), mutation.consume);
   return jsonResponse(result, context, { status: result.idempotent ? 200 : 201 });
 }
 
 async function handleEntry(request: Request, env: Env, context: RequestContext): Promise<Response> {
-  const sessionFingerprint = await authorizeMutation(request, env);
+  const mutation = await authenticateMutation(request, env);
   const input = parseEntryBody(await readJsonBody(request));
-  const result = await createBeerEntry(env, input, sessionFingerprint);
+  const result = await createBeerEntry(
+    env,
+    input,
+    mutation.fingerprint,
+    Date.now(),
+    mutation.consume,
+  );
   return jsonResponse(result, context, { status: result.idempotent ? 200 : 201 });
 }
 

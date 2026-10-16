@@ -19,6 +19,7 @@ import { StatCard } from './components/StatCard';
 import { Toast } from './components/Toast';
 import { TrendChart } from './components/TrendChart';
 import { UpdateModal } from './components/UpdateModal';
+import type { RecordingParticipant } from './components/UpdateModal';
 import { useDashboard } from './hooks/useDashboard';
 import {
   averagePerElapsedDay,
@@ -41,10 +42,16 @@ function App() {
   const [updateOpen, setUpdateOpen] = useState(false);
   const [toast, setToast] = useState<{ message: string; kind: 'success' | 'error' } | null>(null);
   const [saveNotice, setSaveNotice] = useState('');
+  const [receipt, setReceipt] = useState<{ entryId: string; idempotent: boolean } | null>(null);
+  const [resourceRevision, setResourceRevision] = useState(0);
   const [retrying, setRetrying] = useState(false);
   const [route, setRoute] = useState(readRoute);
   const [correctionSource, setCorrectionSource] = useState<BeerEntry | undefined>();
+  const [recordingParticipants, setRecordingParticipants] = useState<
+    RecordingParticipant[] | undefined
+  >();
   const openAfterLogin = useRef(false);
+  const resumeAfterLogin = useRef<(() => void) | undefined>(undefined);
   const saveSequence = useRef(0);
   const modalTrigger = useRef<HTMLElement | null>(null);
   const hadOpenDialog = useRef(false);
@@ -111,11 +118,12 @@ function App() {
       ),
     };
   }, [summary]);
-  const record = () => {
+  const record = (people?: RecordingParticipant[]) => {
     setToast(null);
     modalTrigger.current =
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setCorrectionSource(undefined);
+    setRecordingParticipants(people);
     if (session) setUpdateOpen(true);
     else {
       openAfterLogin.current = true;
@@ -133,18 +141,36 @@ function App() {
     modalTrigger.current =
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setCorrectionSource(entry);
+    setRecordingParticipants(undefined);
     if (session) setUpdateOpen(true);
     else {
       openAfterLogin.current = true;
       setLoginOpen(true);
     }
   };
+  const requestLogin = (resume?: () => void) => {
+    clearSession();
+    setSession(null);
+    resumeAfterLogin.current = resume;
+    setToast(null);
+    // Keep any mounted metadata/member editor and its unsent work in place.
+    setLoginOpen(true);
+  };
+  const invalidateCommunity = () => {
+    setResourceRevision((value) => value + 1);
+    void refresh();
+  };
   const handleLogin = async (code: string): Promise<EditorSession> => {
     const next = await login(code);
     storeSession(next);
     setSession(next);
     setLoginOpen(false);
-    if (openAfterLogin.current || readDraft()?.attempt) {
+    if (resumeAfterLogin.current) {
+      const resume = resumeAfterLogin.current;
+      resumeAfterLogin.current = undefined;
+      resume();
+    }
+    if (openAfterLogin.current) {
       openAfterLogin.current = false;
       setUpdateOpen(true);
       setToast(null);
@@ -163,6 +189,8 @@ function App() {
     try {
       const result = await submitEntry(payload, session.token);
       applyMutation(result);
+      setResourceRevision((value) => value + 1);
+      if (result.entry) setReceipt({ entryId: result.entry.id, idempotent: result.idempotent });
       setUpdateOpen(false);
       const sequence = ++saveSequence.current;
       setSaveNotice('Saved. Refreshing the shared dashboard…');
@@ -244,9 +272,10 @@ function App() {
             setToast(null);
             modalTrigger.current =
               document.activeElement instanceof HTMLElement ? document.activeElement : null;
+            openAfterLogin.current = Boolean(readDraft()?.attempt);
             setLoginOpen(true);
           }}
-          onAdd={record}
+          onAdd={() => record()}
           onLogout={logout}
         />
         <nav className="main-nav" aria-label="Main navigation">
@@ -278,12 +307,45 @@ function App() {
               <span>{saveNotice}</span>
               <button
                 className="text-button"
-                onClick={() => setSaveNotice('')}
+                onClick={() => {
+                  setSaveNotice('');
+                  setReceipt(null);
+                }}
                 aria-label="Dismiss save status"
               >
                 Dismiss
               </button>
             </div>
+          ) : null}
+          {receipt ? (
+            <section className="save-receipt panel" aria-label="Saved entry receipt">
+              <p>
+                <strong>{receipt.idempotent ? 'Saved entry confirmed' : 'Entry saved'}</strong>
+                {receipt.idempotent ? ' · Your exact retry did not create a duplicate.' : ''}
+              </p>
+              <div className="entry-review__actions">
+                <a
+                  className="button button--outline"
+                  href={`#/entry/${encodeURIComponent(receipt.entryId)}`}
+                >
+                  View saved entry
+                </a>
+                {capabilities?.metadataEditing ? (
+                  <a
+                    className="button button--quiet"
+                    href={`#/entry/${encodeURIComponent(receipt.entryId)}?edit=memory`}
+                  >
+                    Add memory
+                  </a>
+                ) : null}
+                <a
+                  className="button button--quiet"
+                  href={`#/entry/${encodeURIComponent(receipt.entryId)}?share=1`}
+                >
+                  Share saved entry
+                </a>
+              </div>
+            </section>
           ) : null}
           {degraded && summary ? (
             <p className="notice">
@@ -314,11 +376,26 @@ function App() {
               </a>
             </div>
           ) : section === 'crew' ? (
-            <CrewPage key={route} query={query} />
+            <CrewPage
+              key={route}
+              query={query}
+              resourceRevision={resourceRevision + (summary?.revision ?? 0)}
+            />
           ) : section === 'member' ? (
-            <MemberPageView key={route} id={id} timezone={timezone} />
+            <MemberPageView
+              key={route}
+              id={id}
+              timezone={timezone}
+              resourceRevision={resourceRevision + (summary?.revision ?? 0)}
+              onRecord={record}
+            />
           ) : section === 'history' ? (
-            <HistoryPage key={route} query={query} timezone={timezone} />
+            <HistoryPage
+              key={route}
+              query={query}
+              timezone={timezone}
+              resourceRevision={resourceRevision + (summary?.revision ?? 0)}
+            />
           ) : section === 'entry' ? (
             <EntryDetail
               key={route}
@@ -327,9 +404,19 @@ function App() {
               capabilities={capabilities}
               token={session?.token}
               onCorrect={correct}
+              resourceRevision={resourceRevision + (summary?.revision ?? 0)}
+              onMutation={invalidateCommunity}
+              onLogin={requestLogin}
+              onRecord={record}
+              editMemory={new URLSearchParams(query).get('edit') === 'memory'}
             />
           ) : section === 'recaps' ? (
-            <RecapsPage key={route} query={query} timezone={timezone} />
+            <RecapsPage
+              key={route}
+              query={query}
+              timezone={timezone}
+              resourceRevision={resourceRevision + (summary?.revision ?? 0)}
+            />
           ) : summary && metrics ? (
             <>
               <h2 id="page-title" className="sr-only" tabIndex={-1}>
@@ -348,7 +435,7 @@ function App() {
                     Good company. <br /> A shared story.
                   </h2>
                   <p>A place for the occasions, familiar faces and little details along the way.</p>
-                  <button className="button button--primary" onClick={record}>
+                  <button className="button button--primary" onClick={() => record()}>
                     {readDraft()?.attempt ? 'Resolve saved submission' : 'Record entry'}
                   </button>
                   <p className="deadline">
@@ -531,17 +618,21 @@ function App() {
         onClose={() => {
           setLoginOpen(false);
           openAfterLogin.current = false;
+          resumeAfterLogin.current = undefined;
         }}
         onSubmit={handleLogin}
       />
       {updateOpen ? (
         <UpdateModal
-          open
+          open={!loginOpen}
           onClose={() => setUpdateOpen(false)}
           onSubmit={handleSubmit}
           capabilities={capabilities}
           token={session?.token}
           initialCorrection={correctionSource}
+          initialParticipants={recordingParticipants}
+          onLogin={requestLogin}
+          onMutation={invalidateCommunity}
         />
       ) : null}
       <Toast message={toast?.message ?? null} kind={toast?.kind ?? 'success'} />

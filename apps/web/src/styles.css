@@ -2794,3 +2794,19 @@ select {
   max-width: var(--content-width);
   margin-inline: auto;
 }
+.save-receipt {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: center;
+}
+.save-receipt > p {
+  flex: 1 1 14rem;
+  margin: 0;
+}
+.save-receipt .entry-review__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0;
+}
