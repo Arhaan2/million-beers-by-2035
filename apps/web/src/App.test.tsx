@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
 import { UpdateModal } from './components/UpdateModal';
-import type { DashboardSummary, EntryPayload } from './lib/types';
+import type { BeerEntry, DashboardSummary, EntryPayload } from './lib/types';
 import { validateUpdate } from './lib/updateValidation';
 
 const summary: DashboardSummary = {
@@ -76,6 +76,179 @@ beforeEach(() => {
 });
 
 describe('App', () => {
+  it('refreshes linked corrections and the remaining allowance while keeping the original detail open', async () => {
+    window.history.replaceState(null, '', '/#/entry/original-entry');
+    sessionStorage.setItem(
+      'million-beers-editor-session',
+      JSON.stringify({ token: 'signed-token', expiresAt: 4_102_444_800 }),
+    );
+    let corrected = false;
+    const original: BeerEntry = {
+      id: 'original-entry',
+      totalAmount: 2,
+      note: null,
+      createdAt: Date.UTC(2026, 9, 16),
+      localDay: '2026-10-16',
+      isCorrection: false,
+      isGroup: false,
+      allocations: [
+        {
+          id: 'source-allocation',
+          contributor: 'Sam',
+          memberId: 'member-sam',
+          amount: 2,
+          remainingCorrectable: 2,
+        },
+      ],
+    };
+    const correction: BeerEntry = {
+      ...original,
+      id: 'returned-correction',
+      totalAmount: -1,
+      note: 'Duplicate allocation',
+      isCorrection: true,
+      correctionOfEntryId: original.id,
+      allocations: [
+        { id: 'correction-allocation', contributor: 'Sam', memberId: 'member-sam', amount: -1 },
+      ],
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url =
+          typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+        if (url.endsWith('/api/session')) return Promise.resolve(jsonResponse({ valid: true }));
+        if (url.endsWith('/api/entries') && init?.method === 'POST') {
+          corrected = true;
+          return Promise.resolve(
+            jsonResponse({
+              entry: correction,
+              stats: { total: 6, entryCount: 2, allocationCount: 2 },
+              idempotent: false,
+            }),
+          );
+        }
+        if (url.endsWith('/api/entries/original-entry'))
+          return Promise.resolve(
+            jsonResponse({
+              entry: {
+                ...original,
+                allocations: original.allocations.map((allocation) => ({
+                  ...allocation,
+                  remainingCorrectable: corrected ? 1 : 2,
+                })),
+              },
+              corrections: corrected ? [correction] : [],
+            }),
+          );
+        return Promise.resolve(
+          jsonResponse({ ...summary, capabilities: { history: true, linkedCorrections: true } }),
+        );
+      }),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole('button', { name: 'Correct this entry' }));
+    expect(screen.getByText('Up to 2')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Beer allocation for participant 1'), {
+      target: { value: '1' },
+    });
+    await user.type(screen.getByLabelText('Correction reason'), 'Duplicate allocation');
+    await user.click(screen.getByRole('button', { name: 'Review group correction' }));
+    await user.click(screen.getByRole('button', { name: 'Confirm correction' }));
+    expect(await screen.findByRole('heading', { name: 'Linked corrections' })).toBeInTheDocument();
+    expect(window.location.hash).toBe('#/entry/original-entry');
+    expect(screen.getByRole('link', { name: 'View saved entry' })).toHaveAttribute(
+      'href',
+      '#/entry/returned-correction',
+    );
+    await user.click(screen.getByRole('button', { name: 'Correct this entry' }));
+    expect(screen.getByText('Up to 1')).toBeInTheDocument();
+    expect(screen.getByLabelText('Beer allocation for participant 1')).toHaveValue(1);
+  });
+  it('carries a member shortcut through login, refreshes the mounted member and links the actual retry receipt', async () => {
+    window.history.replaceState(null, '', '/#/member/member-sam');
+    let saved = false;
+    let memberReads = 0;
+    const entry: BeerEntry = {
+      id: 'actual-returned-entry',
+      totalAmount: 1,
+      note: null,
+      createdAt: Date.UTC(2026, 9, 16),
+      localDay: '2026-10-16',
+      isCorrection: false,
+      isGroup: false,
+      allocations: [{ id: 'a', contributor: 'Sam', memberId: 'member-sam', amount: 1 }],
+    };
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url.endsWith('/api/login'))
+        return Promise.resolve(jsonResponse({ token: 'signed-token', expiresAt: 4_102_444_800 }));
+      if (url.endsWith('/api/session')) return Promise.resolve(jsonResponse({ valid: true }));
+      if (url.endsWith('/api/entries') && init?.method === 'POST') {
+        saved = true;
+        return Promise.resolve(
+          jsonResponse({
+            entry,
+            stats: { total: 8, entryCount: 2, allocationCount: 2 },
+            idempotent: true,
+          }),
+        );
+      }
+      if (url.endsWith('/api/members/member-sam')) {
+        memberReads += 1;
+        return Promise.resolve(
+          jsonResponse({
+            member: {
+              id: 'member-sam',
+              displayName: 'Sam',
+              aliases: [],
+              allocationCount: saved ? 2 : 1,
+              participationCount: saved ? 2 : 1,
+              netTotal: saved ? 8 : 7,
+              lastRecordedAt: null,
+            },
+            history: { entries: saved ? [entry] : [], nextCursor: null },
+          }),
+        );
+      }
+      return Promise.resolve(
+        jsonResponse({
+          ...summary,
+          capabilities: { crew: true, history: true, enhancedLogging: true, metadataEditing: true },
+        }),
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole('button', { name: 'Record for this member' }));
+    await user.type(screen.getByLabelText('Crew code'), 'test-code');
+    await user.click(screen.getByRole('button', { name: 'Unlock editor' }));
+    expect(await screen.findByLabelText('Contributor / nickname')).toHaveValue('Sam');
+    await user.click(screen.getByRole('button', { name: 'Record +1 beers' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(await screen.findByRole('link', { name: 'View saved entry' })).toHaveAttribute(
+      'href',
+      '#/entry/actual-returned-entry',
+    );
+    expect(screen.getByRole('link', { name: 'Add memory' })).toHaveAttribute(
+      'href',
+      '#/entry/actual-returned-entry?edit=memory',
+    );
+    expect(screen.getByText(/Your exact retry did not create a duplicate/u)).toBeInTheDocument();
+    await waitFor(() => expect(memberReads).toBeGreaterThan(1));
+    expect(window.location.hash).toBe('#/member/member-sam');
+    const post = fetchMock.mock.calls.find(
+      ([, init]) =>
+        init?.method === 'POST' &&
+        typeof init.body === 'string' &&
+        init.body.includes('allocations'),
+    );
+    expect(JSON.parse(typeof post?.[1]?.body === 'string' ? post[1].body : '{}')).toMatchObject({
+      allocations: [{ memberId: 'member-sam', contributor: 'Sam', amount: 1 }],
+    });
+  });
   it('skips to content without leaving the current page', async () => {
     window.history.replaceState(null, '', '/#/about');
     renderDashboard();

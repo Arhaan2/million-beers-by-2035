@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { createMember, fetchMembers } from '../lib/api';
+import { ApiRequestError, createMember, fetchMembers } from '../lib/api';
 import type { CrewMember } from '../lib/types';
 import { readRecentParticipants } from '../lib/drafts';
 
@@ -13,6 +13,8 @@ export function MemberPicker({
   enabled,
   disabled,
   inputRef,
+  onLogin,
+  onMutation,
 }: {
   value: string;
   memberId?: string | undefined;
@@ -23,6 +25,8 @@ export function MemberPicker({
   enabled: boolean;
   disabled?: boolean;
   inputRef?: (element: HTMLInputElement | null) => void;
+  onLogin?: (() => void) | undefined;
+  onMutation?: (() => void) | undefined;
 }) {
   const generatedId = useId();
   const id = inputId ?? generatedId;
@@ -36,6 +40,7 @@ export function MemberPicker({
   const [recent] = useState(readRecentParticipants);
   const nameInput = useRef<HTMLInputElement>(null);
   const requestVersion = useRef(0);
+  const creationInFlight = useRef(false);
   const waitingForResults = enabled && expanded && resultQuery !== value;
   const pending = busy || creating || waitingForResults;
   const visibleMembers = resultQuery === value ? members : [];
@@ -98,14 +103,89 @@ export function MemberPicker({
     }
   };
   const create = async () => {
-    if (!token || !value.trim() || pending) return;
+    if (!value.trim() || pending || creationInFlight.current) return;
+    if (!token) {
+      onLogin?.();
+      return;
+    }
+    creationInFlight.current = true;
     setCreating(true);
+    setError('');
+    const requestedName = value.trim().replace(/\s+/gu, ' ');
+    let dispatched = false;
+    const normalize = (name: string) => name.normalize('NFKC').toLocaleLowerCase('en-US');
+    const findExisting = async (search?: string): Promise<CrewMember | undefined> => {
+      let next: string | null = null;
+      const seen = new Set<string>();
+      let pages = 0;
+      do {
+        const query = new URLSearchParams(search ? { q: search, limit: '50' } : { limit: '50' });
+        if (next) query.set('cursor', next);
+        const page = await fetchMembers(query.toString());
+        pages += 1;
+        const matching = page.members.find((member) =>
+          [member.displayName, ...member.aliases].some(
+            (name) => normalize(name) === normalize(requestedName),
+          ),
+        );
+        if (matching) return matching;
+        next = page.nextCursor;
+        if (next && seen.has(next))
+          throw new Error('The directory changed. Check it again before creating this member.');
+        if (next) seen.add(next);
+        if (next && pages >= 50)
+          throw new Error(
+            'The directory is too large to check safely. Select the existing member from the directory.',
+          );
+      } while (next);
+      return undefined;
+    };
+    // Public text search and normalized alias uniqueness have different Unicode
+    // rules. A bounded directory fallback also finds fullwidth/case aliases.
+    const reconcile = async (): Promise<CrewMember | undefined> =>
+      (await findExisting(requestedName)) ?? (await findExisting());
     try {
-      const { member } = await createMember(value.trim(), token);
+      // Always reconcile first, including after closing/reopening a lost-response attempt.
+      // The server's unique normalized alias constraint also protects concurrent creations.
+      const existing = await reconcile();
+      if (existing) {
+        select(existing.displayName, existing.id);
+        onMutation?.();
+        return;
+      }
+      dispatched = true;
+      const { member } = await createMember(requestedName, token);
       select(member.displayName, member.id);
+      onMutation?.();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Member could not be created.');
+      if (!dispatched) {
+        setError(
+          'The directory could not be checked. No member was created. Your name is preserved; try again when connected.',
+        );
+      } else if (caught instanceof ApiRequestError && caught.status === 401) {
+        setError(
+          'Your name is preserved. Sign in again, then choose Create to check the directory and continue.',
+        );
+        onLogin?.();
+      } else if (caught instanceof ApiRequestError && (caught.retryable || caught.status === 409)) {
+        try {
+          const existing = await reconcile();
+          if (existing) {
+            select(existing.displayName, existing.id);
+            onMutation?.();
+          } else {
+            setError(
+              'This member has not been confirmed in the directory. Your name is preserved. Choose Create again to recheck before another attempt.',
+            );
+          }
+        } catch {
+          setError(
+            'Member creation could not be confirmed, and the directory is unavailable. Your name is preserved. Choose Create again when connected; the directory will be checked first.',
+          );
+        }
+      } else setError(caught instanceof Error ? caught.message : 'Member could not be created.');
     } finally {
+      creationInFlight.current = false;
       setCreating(false);
     }
   };
@@ -215,14 +295,14 @@ export function MemberPicker({
                   More members
                 </button>
               ) : null}
-              {token && value.trim() && !memberId ? (
+              {(token || onLogin) && value.trim() && !memberId ? (
                 <button
                   type="button"
                   disabled={pending}
                   className="button button--outline"
                   onClick={() => void create()}
                 >
-                  Create “{value.trim()}” as a member
+                  {token ? `Create “${value.trim()}” as a member` : 'Sign in to create this member'}
                 </button>
               ) : null}
               {pending ? (

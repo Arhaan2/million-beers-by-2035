@@ -34,6 +34,50 @@ afterEach(() => {
 });
 
 describe('durable entry drafts', () => {
+  it('retains group membership through rename and deletion without changing a ledger draft', async () => {
+    const drafts = await import('./drafts');
+    drafts.writeDraft(drafts.makeDraft(form, { payload, state: 'unknown' }));
+    const people = [
+      { contributor: 'Sam', memberId: 'member-sam' },
+      { contributor: 'Jo', memberId: 'member-jo' },
+    ];
+    expect(drafts.saveGroup({ name: 'Friends', people })).toBe(true);
+    expect(drafts.renameGroup('Friends', 'Friday crew')).toBe(true);
+    vi.resetModules();
+    const restored = await import('./drafts');
+    expect(restored.readGroups()).toEqual([{ name: 'Friday crew', people }]);
+    expect(restored.deleteGroup('Friday crew')).toBe(true);
+    expect(restored.readGroups()).toEqual([]);
+    expect(restored.readDraft()?.attempt?.payload).toEqual(payload);
+  });
+
+  it('does not overwrite another named group or the last group while renaming', async () => {
+    const drafts = await import('./drafts');
+    const people = [{ contributor: 'A' }, { contributor: 'B' }];
+    drafts.saveGroup({ name: 'One', people });
+    drafts.saveGroup({ name: 'Two', people });
+    drafts.saveGroup({ name: 'Last group', people });
+    expect(drafts.renameGroup('One', 'Two')).toBe(false);
+    expect(drafts.renameGroup('One', 'Last group')).toBe(false);
+    expect(drafts.deleteGroup('Last group')).toBe(false);
+    expect(drafts.readGroups()).toHaveLength(3);
+  });
+
+  it('remembers only an explicitly saved stable participant and resets independently of drafts', async () => {
+    const drafts = await import('./drafts');
+    expect(drafts.readDefaultParticipant()).toBeNull();
+    expect(drafts.saveDefaultParticipant({ contributor: 'Sam', memberId: 'member-sam' })).toBe(
+      true,
+    );
+    vi.resetModules();
+    const restored = await import('./drafts');
+    expect(restored.readDefaultParticipant()).toEqual({
+      contributor: 'Sam',
+      memberId: 'member-sam',
+    });
+    expect(restored.saveDefaultParticipant(null)).toBe(true);
+    expect(restored.readDefaultParticipant()).toBeNull();
+  });
   it('persists the exact uncertain payload and original key across a module reload', async () => {
     let drafts = await import('./drafts');
     const record = drafts.makeDraft(form, { payload, state: 'unknown' });

@@ -12,6 +12,10 @@ import {
   makeDraft,
   readDraft,
   readGroups,
+  readDefaultParticipant,
+  saveDefaultParticipant,
+  renameGroup,
+  deleteGroup,
   saveGroup,
   saveRecentParticipants,
   withDraftLock,
@@ -27,23 +31,38 @@ import { MemberPicker } from './MemberPicker';
 
 const QUICK_AMOUNTS = [1, 2, 4, 6, 12, 24];
 const person = (): ParticipantDraft => ({ id: crypto.randomUUID(), contributor: '', amount: 1 });
-function newForm(source?: BeerEntry): FormDraft {
-  const participants = source?.allocations
-    .filter((allocation) => (allocation.remainingCorrectable ?? 0) > 0)
-    .map((allocation) => ({
-      id: crypto.randomUUID(),
-      contributor: allocation.contributor,
-      amount: allocation.remainingCorrectable ?? 0,
-      maximum: allocation.remainingCorrectable ?? 0,
-      memberId: allocation.memberId ?? undefined,
-      sourceAllocationId: allocation.id,
-    })) ?? [person(), person()];
+export interface RecordingParticipant {
+  memberId: string;
+  displayName: string;
+}
+function newForm(source?: BeerEntry, people?: RecordingParticipant[]): FormDraft {
+  const participants =
+    source?.allocations
+      .filter((allocation) => (allocation.remainingCorrectable ?? 0) > 0)
+      .map((allocation) => ({
+        id: crypto.randomUUID(),
+        contributor: allocation.contributor,
+        amount: allocation.remainingCorrectable ?? 0,
+        maximum: allocation.remainingCorrectable ?? 0,
+        memberId: allocation.memberId ?? undefined,
+        sourceAllocationId: allocation.id,
+      })) ??
+    (people && people.length > 1
+      ? people.map((item) => ({
+          ...person(),
+          contributor: item.displayName,
+          memberId: item.memberId,
+        }))
+      : [person(), person()]);
+  const defaultPerson = readDefaultParticipant();
+  const selected = people?.[0];
   return {
-    mode: source ? 'group' : 'single',
+    mode: source || (people?.length ?? 0) > 1 ? 'group' : 'single',
     amount: 1,
-    groupTotal: source ? allocationSum(participants) : 2,
+    groupTotal: source ? allocationSum(participants) : participants.length,
     participants,
-    contributor: '',
+    contributor: source ? '' : (selected?.displayName ?? defaultPerson?.contributor ?? ''),
+    memberId: source ? undefined : (selected?.memberId ?? defaultPerson?.memberId),
     note: '',
     correction: Boolean(source),
     correctionOfEntryId: source?.id,
@@ -77,6 +96,9 @@ export function UpdateModal({
   capabilities,
   token,
   initialCorrection,
+  initialParticipants,
+  onLogin,
+  onMutation,
 }: {
   open: boolean;
   onClose: () => void;
@@ -85,9 +107,14 @@ export function UpdateModal({
   capabilities?: Capabilities | undefined;
   token?: string | undefined;
   initialCorrection?: BeerEntry | undefined;
+  initialParticipants?: RecordingParticipant[] | undefined;
+  onLogin?: (() => void) | undefined;
+  onMutation?: (() => void) | undefined;
 }) {
   const [initial] = useState(() => readDraft());
-  const [form, setForm] = useState<FormDraft>(() => initial?.form ?? newForm(initialCorrection));
+  const [form, setForm] = useState<FormDraft>(
+    () => initial?.form ?? newForm(initialCorrection, initialParticipants),
+  );
   const [attempt, setAttempt] = useState<DraftRecord['attempt']>(() =>
     initial?.attempt
       ? { ...initial.attempt, state: initial.attempt.state === 'auth' ? 'auth' : 'unknown' }
@@ -98,6 +125,9 @@ export function UpdateModal({
   const [submitting, setSubmitting] = useState(false);
   const [storageNotice, setStorageNotice] = useState(getDraftStatus);
   const [groups, setGroups] = useState(readGroups);
+  const [groupEditor, setGroupEditor] = useState<{ original?: string; name: string } | null>(null);
+  const [groupMessage, setGroupMessage] = useState('');
+  const [defaultParticipant, setDefaultParticipant] = useState(readDefaultParticipant);
   const firstButton = useRef<HTMLButtonElement>(null);
   const reviewHeading = useRef<HTMLHeadingElement>(null);
   const editHeading = useRef<HTMLHeadingElement>(null);
@@ -176,7 +206,7 @@ export function UpdateModal({
       : validateGroupEntry(groupTotal, participants, correction, note);
   const allocated = allocationSum(participants),
     remaining = groupTotal - allocated;
-  const groupMessage =
+  const allocationMessage =
     remaining === 0
       ? `${allocated} of ${groupTotal} allocated`
       : remaining > 0
@@ -363,6 +393,33 @@ export function UpdateModal({
     const next = group.people.map((item) => ({ ...item, id: crypto.randomUUID(), amount: 1 }));
     patch({ mode: 'group', participants: next, groupTotal: next.length, correction: false });
   };
+  const saveNamedGroup = () => {
+    if (!groupEditor) return;
+    const name = groupEditor.name.trim();
+    if (
+      !name ||
+      name === 'Last group' ||
+      groups.some((group) => group.name === name && name !== groupEditor.original)
+    ) {
+      setGroupMessage(
+        'Choose a unique group name. “Last group” is kept for your most recent group.',
+      );
+      return;
+    }
+    const saved = groupEditor.original
+      ? renameGroup(groupEditor.original, name)
+      : saveGroup({
+          name,
+          people: participants.map(({ contributor, memberId }) => ({ contributor, memberId })),
+        });
+    if (!saved) {
+      setGroupMessage('This browser could not save the group. Your entry is unchanged.');
+      return;
+    }
+    setGroups(readGroups());
+    setGroupEditor(null);
+    setGroupMessage(`“${name}” saved on this device.`);
+  };
   return (
     <div
       className="modal-backdrop"
@@ -488,6 +545,12 @@ export function UpdateModal({
                 the selected entry.
               </p>
             ) : null}
+            {initial && initialParticipants?.length ? (
+              <p className="notice">
+                Your saved draft comes first. Finish it or discard it below to start with the
+                requested people.
+              </p>
+            ) : null}
             {linked ? (
               <p className="helper">
                 This correction creates a separate record in your history. Enter zero to leave a
@@ -564,9 +627,50 @@ export function UpdateModal({
                       memberId={form.memberId}
                       enabled={Boolean(capabilities?.enhancedLogging)}
                       token={capabilities?.memberCreation ? token : undefined}
+                      onLogin={capabilities?.memberCreation ? onLogin : undefined}
+                      onMutation={onMutation}
                       onChange={(contributor, memberId) => patch({ contributor, memberId })}
                     />
                   </div>
+                  {capabilities?.enhancedLogging ? (
+                    <div className="participant-preference">
+                      {form.memberId && form.memberId !== defaultParticipant?.memberId ? (
+                        <button
+                          type="button"
+                          className="text-button"
+                          onClick={() => {
+                            const selected = {
+                              contributor: form.contributor,
+                              memberId: form.memberId,
+                            };
+                            if (saveDefaultParticipant(selected)) setDefaultParticipant(selected);
+                            else setError('This browser could not remember the participant.');
+                          }}
+                        >
+                          Remember {form.contributor} as the default person
+                        </button>
+                      ) : null}
+                      {defaultParticipant ? (
+                        <p className="helper">
+                          Default on this device: {defaultParticipant.contributor}.{' '}
+                          <button
+                            type="button"
+                            className="text-button"
+                            onClick={() => {
+                              if (saveDefaultParticipant(null)) setDefaultParticipant(null);
+                              else
+                                setError('This browser could not reset the default participant.');
+                            }}
+                          >
+                            Reset default person
+                          </button>
+                        </p>
+                      ) : null}
+                      <p className="helper">
+                        A personal shortcut only; it does not identify who is signed in.
+                      </p>
+                    </div>
+                  ) : null}
                 </>
               ) : (
                 <>
@@ -583,14 +687,41 @@ export function UpdateModal({
                       {groups
                         .filter((group) => group.name !== 'Last group')
                         .map((group) => (
-                          <button
-                            type="button"
-                            className="text-button"
-                            key={group.name}
-                            onClick={() => restoreGroup(group.name)}
-                          >
-                            Use {group.name}
-                          </button>
+                          <div key={group.name} className="saved-group-row">
+                            <button
+                              type="button"
+                              className="text-button"
+                              onClick={() => restoreGroup(group.name)}
+                            >
+                              Use {group.name}
+                            </button>
+                            <button
+                              type="button"
+                              className="text-button"
+                              aria-label={`Rename group ${group.name}`}
+                              onClick={() => {
+                                setGroupEditor({ original: group.name, name: group.name });
+                                setGroupMessage('');
+                              }}
+                            >
+                              Rename
+                            </button>
+                            <button
+                              type="button"
+                              className="text-button"
+                              aria-label={`Delete group ${group.name}`}
+                              onClick={() => {
+                                if (deleteGroup(group.name)) {
+                                  setGroups(readGroups());
+                                  setGroupMessage(
+                                    `“${group.name}” deleted from this device. Saved entries are unchanged.`,
+                                  );
+                                } else setGroupMessage('This browser could not delete the group.');
+                              }}
+                            >
+                              Delete
+                            </button>
+                          </div>
                         ))}
                       <p className="helper">
                         Restores people only. Review and enter this occasion’s quantities.
@@ -653,6 +784,8 @@ export function UpdateModal({
                             enabled={Boolean(capabilities?.enhancedLogging)}
                             disabled={linked}
                             token={capabilities?.memberCreation ? token : undefined}
+                            onLogin={capabilities?.memberCreation ? onLogin : undefined}
+                            onMutation={onMutation}
                             inputRef={(element) => {
                               if (element) inputs.current.set(participant.id, element);
                               else inputs.current.delete(participant.id);
@@ -727,7 +860,7 @@ export function UpdateModal({
                         className={`allocation-status ${remaining === 0 ? 'allocation-status--exact' : 'allocation-status--mismatch'}`}
                         aria-live="polite"
                       >
-                        <strong>{groupMessage}</strong>
+                        <strong>{allocationMessage}</strong>
                         <span>Allocations must match the total exactly.</span>
                       </p>
                       <button
@@ -735,24 +868,57 @@ export function UpdateModal({
                         type="button"
                         disabled={participants.some((item) => !item.contributor.trim())}
                         onClick={() => {
-                          const name = window.prompt(
-                            'Name this participant group (stored only on this device):',
-                          );
-                          if (name?.trim()) {
-                            const saved = saveGroup({
-                              name: name.trim().slice(0, 40),
-                              people: participants.map(({ contributor, memberId }) => ({
-                                contributor,
-                                memberId,
-                              })),
-                            });
-                            setGroups(readGroups());
-                            if (!saved) setError('This browser could not save the group.');
-                          }
+                          setGroupEditor({ name: '' });
+                          setGroupMessage('');
                         }}
                       >
                         Save these people as a group
                       </button>
+                      {groupEditor ? (
+                        <div
+                          className="saved-group-editor"
+                          role="group"
+                          aria-label={
+                            groupEditor.original ? 'Rename saved group' : 'Name saved group'
+                          }
+                        >
+                          <label htmlFor="saved-group-name">Group name</label>
+                          <input
+                            id="saved-group-name"
+                            maxLength={40}
+                            value={groupEditor.name}
+                            autoFocus
+                            onChange={(event) =>
+                              setGroupEditor({ ...groupEditor, name: event.target.value })
+                            }
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter') {
+                                event.preventDefault();
+                                saveNamedGroup();
+                              }
+                            }}
+                          />
+                          <button
+                            type="button"
+                            className="button button--outline"
+                            onClick={saveNamedGroup}
+                          >
+                            Save group name
+                          </button>
+                          <button
+                            type="button"
+                            className="text-button"
+                            onClick={() => setGroupEditor(null)}
+                          >
+                            Cancel group naming
+                          </button>
+                        </div>
+                      ) : null}
+                      {groupMessage ? (
+                        <p className="helper" role="status">
+                          {groupMessage}
+                        </p>
+                      ) : null}
                     </>
                   ) : null}
                 </>
@@ -917,7 +1083,7 @@ export function UpdateModal({
                       );
                       return;
                     }
-                    setForm(newForm(initialCorrection));
+                    setForm(newForm(initialCorrection, initialParticipants));
                     setReviewing(false);
                     setError(null);
                   });

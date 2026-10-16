@@ -2,8 +2,8 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiRequestError } from '../lib/api';
-import { DRAFT_KEY } from '../lib/drafts';
-import type { EntryPayload } from '../lib/types';
+import { DRAFT_KEY, readGroups, saveDefaultParticipant } from '../lib/drafts';
+import type { Capabilities, EntryPayload } from '../lib/types';
 import { UpdateModal } from './UpdateModal';
 
 beforeEach(() => {
@@ -13,6 +13,111 @@ beforeEach(() => {
 });
 
 describe('durable modal recovery', () => {
+  it('starts contextual people with fresh quantities, empty memory and a fresh key for each new entry', async () => {
+    const submit = vi.fn<(payload: EntryPayload) => Promise<void>>().mockResolvedValue();
+    const people = [
+      { memberId: 'member-sam', displayName: 'Sam' },
+      { memberId: 'member-jo', displayName: 'Jo' },
+    ];
+    const first = render(
+      <UpdateModal open onClose={vi.fn()} onSubmit={submit} initialParticipants={people} />,
+    );
+    expect(screen.getByLabelText('Person 1')).toHaveValue('Sam');
+    expect(screen.getByLabelText('Person 2')).toHaveValue('Jo');
+    expect(screen.getByLabelText('Total beers')).toHaveValue(2);
+    fireEvent.click(screen.getByRole('button', { name: 'Review group entry' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm entry' }));
+    await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+    expect(submit.mock.calls[0]?.[0]).toMatchObject({
+      totalAmount: 2,
+      allocations: [
+        { contributor: 'Sam', memberId: 'member-sam', amount: 1 },
+        { contributor: 'Jo', memberId: 'member-jo', amount: 1 },
+      ],
+      note: '',
+    });
+    expect(submit.mock.calls[0]?.[0]).not.toHaveProperty('correctionOfEntryId');
+    expect(submit.mock.calls[0]?.[0]).not.toHaveProperty('occurredAt');
+    await waitFor(() => expect(screen.getByLabelText('Custom amount')).toBeInTheDocument());
+    first.unmount();
+    localStorage.clear();
+    render(
+      <UpdateModal open onClose={vi.fn()} onSubmit={submit} initialParticipants={[people[0]!]} />,
+    );
+    expect(screen.getByLabelText('Contributor / nickname')).toHaveValue('Sam');
+    fireEvent.click(screen.getByRole('button', { name: 'Record +1 beers' }));
+    await waitFor(() => expect(submit).toHaveBeenCalledTimes(2));
+    expect(submit.mock.calls[0]?.[0].idempotencyKey).not.toBe(
+      submit.mock.calls[1]?.[0].idempotencyKey,
+    );
+  });
+
+  it('keeps an unresolved submission ahead of a contextual shortcut', async () => {
+    const submit = vi
+      .fn<(payload: EntryPayload) => Promise<void>>()
+      .mockRejectedValue(new ApiRequestError('Response lost.', 0, true));
+    const first = render(<UpdateModal open onClose={vi.fn()} onSubmit={submit} />);
+    fireEvent.change(screen.getByLabelText('Custom amount'), { target: { value: '6' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Record +6 beers' }));
+    await screen.findByText('Response lost.');
+    const original = submit.mock.calls[0]?.[0];
+    first.unmount();
+    render(
+      <UpdateModal
+        open
+        onClose={vi.fn()}
+        onSubmit={submit}
+        initialParticipants={[{ memberId: 'member-new', displayName: 'New person' }]}
+      />,
+    );
+    expect(screen.getByRole('heading', { name: 'Resolve saved submission' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry saved attempt' }));
+    await waitFor(() => expect(submit).toHaveBeenCalledTimes(2));
+    expect(submit.mock.calls[1]?.[0]).toEqual(original);
+  });
+
+  it('names, renames and deletes a saved group inline using the keyboard', async () => {
+    const user = userEvent.setup();
+    render(
+      <UpdateModal
+        open
+        onClose={vi.fn()}
+        onSubmit={vi.fn()}
+        initialParticipants={[
+          { memberId: 's', displayName: 'Sam' },
+          { memberId: 'j', displayName: 'Jo' },
+        ]}
+      />,
+    );
+    await user.click(screen.getByRole('button', { name: 'Save these people as a group' }));
+    expect(screen.getByLabelText('Group name')).toHaveFocus();
+    await user.type(screen.getByLabelText('Group name'), 'Friends{Enter}');
+    expect(readGroups()[0]?.name).toBe('Friends');
+    await user.click(screen.getByRole('button', { name: 'Rename group Friends' }));
+    await user.clear(screen.getByLabelText('Group name'));
+    await user.type(screen.getByLabelText('Group name'), 'Friday{Enter}');
+    expect(readGroups()[0]?.name).toBe('Friday');
+    await user.click(screen.getByRole('button', { name: 'Delete group Friday' }));
+    expect(readGroups()).toEqual([]);
+    expect(screen.getByLabelText('Person 1')).toHaveValue('Sam');
+  });
+
+  it('uses the explicitly remembered default and provides reset', () => {
+    saveDefaultParticipant({ contributor: 'Sam', memberId: 'member-sam' });
+    render(
+      <UpdateModal
+        open
+        onClose={vi.fn()}
+        onSubmit={vi.fn()}
+        capabilities={{ enhancedLogging: true } as Capabilities}
+      />,
+    );
+    expect(screen.getByLabelText('Contributor / nickname')).toHaveValue('Sam');
+    fireEvent.click(screen.getByRole('button', { name: 'Reset default person' }));
+    expect(screen.queryByRole('button', { name: 'Reset default person' })).not.toBeInTheDocument();
+    // Resetting a preference does not silently edit the current entry.
+    expect(screen.getByLabelText('Contributor / nickname')).toHaveValue('Sam');
+  });
   it('restores a timed-out exact payload and key after closure and a fresh mount', async () => {
     const submit = vi
       .fn<(payload: EntryPayload) => Promise<void>>()
