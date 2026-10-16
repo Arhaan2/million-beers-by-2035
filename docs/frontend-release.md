@@ -21,4 +21,10 @@ The unchanged lockfile reports 10 development-tool package advisories (4 moderat
 
 ## Hosted status
 
-PR, hosted CI, merge and deployed commit evidence will be added after the normal process completes. This file does not itself claim deployment.
+[PR #7](https://github.com/Arhaan2/million-beers-by-2035/pull/7) merged normally after exact-head [CI 38965804594](https://github.com/Arhaan2/million-beers-by-2035/actions/runs/38965804594) passed on `3f1479f5ae502019d780dc33827dacb9116d3f07`. Merge/main/deployed runtime: `860343848a1c0ce7c25017a77721158459604481`. [Pages 38966319339](https://github.com/Arhaan2/million-beers-by-2035/actions/runs/38966319339) completed both build and deployment successfully. Public `release.json` matches; all 13 published files match the exact Pages artifact's SHA-256 hashes.
+
+Read-only public reconciliation preserved every one of the prior 378 entry hashes and 394 allocations at revision 441, total 1,472; no intervening entries appeared. There were no production writes. The Worker tag remains `crew-571550e9422d44df680672557ad708766a2cabe1`, schema 3; no migrations applied. Its current version UUID could not be read with expired owner authentication.
+
+The full remaining implementation is preserved in [draft PR #8](https://github.com/Arhaan2/million-beers-by-2035/pull/8); it is not deployed. Its local integrated gate passes 153 frontend, 80 Worker/D1, 20 release and 17 Python tests plus six browser cases. See [the current checkpoint](next-release-plan.md) for the exact owner sign-in action and protected backend release sequence.
+
+Live read-only verification passed all six Chromium/Firefox/WebKit desktop/mobile sessions against the deployed commit: eight public routes per session, three image formats, API-backed totals and partner metrics/contact, base-path assets, manifest/maskable/iOS icons, and honest online guidance. Zero console/page/network errors and zero attempted mutation requests. No credentials, form submissions or live screenshots were used. One initial verifier assumption about a names checkbox on a project card was corrected (project cards contain no names); the complete six-case run then passed. Physical devices remain untested.
