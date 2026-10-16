@@ -452,10 +452,12 @@ async function browserCase(engineName, engine, mobile, fixtures) {
       ['history', 'The shared history'],
       ['recaps', 'Recaps'],
       ['about', 'An impossible number. Real time together.'],
+      ['partners', 'A shared story, with room for good company.'],
     ]) {
       await navigate(page, route, heading);
       await assertNoOverflow(page, `${label}/${route}`);
     }
+    await navigate(page, 'about', 'An impossible number. Real time together.');
     const skip = page.getByRole('link', { name: 'Skip to main content', exact: true });
     await skip.focus();
     await skip.press('Enter');
@@ -470,6 +472,69 @@ async function browserCase(engineName, engine, mobile, fixtures) {
     await page.reload();
     await page.getByRole('heading', { name: 'Browser seed gathering', exact: true }).waitFor();
     await screenshot('entry');
+    stage = 'sharing-and-installation';
+    const sharingBefore = await localJson('/api/summary');
+    assert.equal(
+      await page.getByLabel('Include public display names on the image').isChecked(),
+      false,
+    );
+    await page.getByRole('button', { name: 'Preview image card', exact: true }).click();
+    for (const [format, width, height] of [
+      ['landscape', 1200, 630],
+      ['square', 1080, 1080],
+      ['story', 1080, 1920],
+    ]) {
+      await page.getByLabel('Image format', { exact: true }).selectOption(format);
+      await page.waitForFunction(
+        ({ width, height }) => {
+          const c = document.querySelector('.card-preview canvas');
+          return c?.width === width && c?.height === height;
+        },
+        { width, height },
+      );
+      const downloadPromise = page.waitForEvent('download');
+      await page.getByRole('button', { name: 'Download image card', exact: true }).click();
+      const file = await downloadPromise;
+      const png = await readFile(await file.path());
+      assert.equal(png.readUInt32BE(16), width);
+      assert.equal(png.readUInt32BE(20), height);
+      const preview = await page
+        .locator('.card-preview canvas')
+        .evaluate((canvas) => canvas.toDataURL('image/png').split(',')[1]);
+      assert.equal(png.toString('base64'), preview, 'Preview and downloaded card differ.');
+      if (engineName === 'chromium' && !mobile)
+        await file.saveAs(path.join(evidence, `saved-entry-${format}.png`));
+    }
+    const manifestResponse = await page.request.get(`${appUrl}manifest.webmanifest`);
+    const manifest = await manifestResponse.json();
+    assert.equal(new URL(manifest.start_url, appUrl).pathname, basePath);
+    assert.equal(new URL(manifest.scope, appUrl).pathname, basePath);
+    assert(manifest.icons.some((icon) => icon.purpose === 'maskable' && icon.type === 'image/png'));
+    for (const icon of manifest.icons.filter((icon) => icon.type === 'image/png')) {
+      const response = await page.request.get(new URL(icon.src, appUrl).href);
+      assert.equal(response.status(), 200);
+      const bytes = await response.body();
+      const size = Number(icon.sizes.split('x')[0]);
+      assert.equal(bytes.readUInt32BE(16), size);
+      assert.equal(bytes.readUInt32BE(20), size);
+    }
+    assert.equal(
+      (await localJson('/api/summary')).revision,
+      sharingBefore.revision,
+      'Sharing changed the ledger.',
+    );
+    if (engineName === 'chromium') {
+      await page.setViewportSize({ width: 320, height: 780 });
+      await assertNoOverflow(page, '320px share preview');
+      await navigate(page, 'partners', 'A shared story, with room for good company.');
+      await screenshot('partners-320');
+      await page.setViewportSize(
+        mobile ? { width: 390, height: 844 } : { width: 1440, height: 1000 },
+      );
+      await screenshot('partners');
+      await navigate(page, `entry/${fixtures.entry.id}`, 'Browser seed gathering');
+    }
+    stage = 'navigation';
     await page.getByRole('link', { name: 'Browser Person 15', exact: true }).click();
     await page.getByRole('heading', { name: 'Browser Person 15', exact: true }).waitFor();
     await page.goBack();
@@ -680,6 +745,10 @@ async function browserCase(engineName, engine, mobile, fixtures) {
         'reauthentication',
         'exact-idempotent-retry',
         'canonical-total',
+        'three-image-formats-preview-download-match',
+        'base-path-installation-icons',
+        'factual-partners',
+        ...(engineName === 'chromium' ? ['320px-sharing-and-partners'] : []),
       ],
       screenshotOnlyDiagnostics: screenshotDiagnostics.length,
       intentionalResponseLossDiagnostics: intentionalNetworkDiagnostics.length,

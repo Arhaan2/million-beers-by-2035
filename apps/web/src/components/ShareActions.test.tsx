@@ -85,8 +85,8 @@ it('shares the prepared PNG when file sharing is supported and preserves cancell
   expect(share).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole('button', { name: 'Share…' }));
   await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Sharing canceled.'));
-  expect(share.mock.calls[0][0].files[0]).toBeInstanceOf(File);
-  expect(share.mock.calls[0][0].files[0].type).toBe('image/png');
-  expect(share.mock.calls[0][0]).not.toHaveProperty('url');
+  expect(share.mock.calls[0]?.[0].files[0]).toBeInstanceOf(File);
+  expect(share.mock.calls[0]?.[0].files[0].type).toBe('image/png');
+  expect(share.mock.calls[0]?.[0]).not.toHaveProperty('url');
   vi.restoreAllMocks();
 });
