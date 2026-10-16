@@ -33,3 +33,14 @@ Reviewed the dashboard, community routes, recording dialogs, member search, shar
 Final synthetic screenshots: [desktop](apple-design/desktop.png), [mobile](apple-design/mobile.png), [mobile login](apple-design/login-mobile.png). The illustrated total of 68 is fixture data, not a live count.
 
 Verification: 101 frontend tests; web typecheck/production build; repository lint and formatting; and all six Chromium/Firefox/WebKit desktop/mobile cases in the [isolated Worker/D1 browser report](apple-design/browser-report.json). The suite now also verifies skip-link route preservation and keyboard focus after login → editor → close. Additional Chromium checks covered 320, 390, 768 and 1440px widths, a synthetic 1,000,000 total, reduced motion, reduced transparency, and increased contrast. No horizontal page or navigation overflow was observed. Physical devices were not tested. Deployment status is tracked by the GitHub Pages workflow and the live `release.json`.
+
+## October 16 release candidate
+
+All examples below are synthetic fixtures, not live totals or audience claims.
+
+- [Three-format share card baseline](next-release/card-baseline.png) reproduces clipping; [landscape](next-release/card-landscape.png), [square](next-release/card-square.png) and [story](next-release/card-story.png) use bounded regions and visible truncation. Maximum text, Unicode/emoji and 25 names were visually inspected.
+- [Recovered memory](next-release/recovered-memory.png) shows saved text after deliberate reauthentication/save; [mobile recap](next-release/recap-mobile.png) shows period navigation and the public archive controls.
+- [Full browser report](next-release/full-browser-report.json): six passing Chromium/Firefox/WebKit desktop/mobile emulation cases against isolated Worker/D1. Covers contextual recording, actual member creation after 401, saved groups, default reset, metadata expiry, correction refresh, 55-record CSV/JSON export, cancellation, history navigation, three-format matching preview/export pixels and installation base paths. Chromium includes 320px checks. Full-page captures scroll to the top before capture to avoid sticky-nav capture artifacts.
+- Early expanded harness runs identified Firefox/WebKit navigation-cancel diagnostics; final results count those separately from application or unexpected network errors. Deliberate response loss/session expiry and WebKit screenshot-helper diagnostics are also explicit in the report. No failed engine is counted as passing.
+
+Source/unit checks additionally cover privacy redaction first discovered through reconciliation, metadata conflicts, stale pagination, export revision changes, Unicode/formula-safe CSV and in-flight image invalidation on data change/unmount. Native share behavior uses test doubles; no physical-device or real OS share-sheet testing is claimed. See [release checkpoint](../next-release-plan.md) for the deployed subset versus backend-blocked candidate.
