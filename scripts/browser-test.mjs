@@ -749,7 +749,10 @@ async function browserCase(engineName, engine, mobile, fixtures) {
       return;
     if (
       request.method() === 'GET' &&
-      /ERR_ABORTED|NS_BINDING_ABORTED|^cancelled$/u.test(request.failure()?.errorText ?? '')
+      request.url().startsWith(`${apiOrigin}/api/`) &&
+      ['net::ERR_ABORTED', 'NS_BINDING_ABORTED', 'cancelled', 'Load request cancelled'].includes(
+        request.failure()?.errorText ?? '',
+      )
     ) {
       canceledReadDiagnostics.push(request.failure()?.errorText);
       return;

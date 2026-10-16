@@ -125,7 +125,7 @@
         "factual-partners"
       ],
       "screenshotOnlyDiagnostics": 0,
-      "canceledReadDiagnostics": 0,
+      "canceledReadDiagnostics": 1,
       "intentionalResponseLossDiagnostics": 1,
       "intentionalSessionExpiryDiagnostics": 0,
       "physicalDevice": false
