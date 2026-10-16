@@ -12,21 +12,25 @@ New entry attempts store their canonical original payload independently of mutab
 
 ## API extensions
 
-| Method/path                      | Purpose                                                                                                               |
-| -------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `GET /health`                    | Process liveness; no database guarantee.                                                                              |
-| `GET /ready`                     | Database/schema checks, non-secret Worker version tag, server-enforced capabilities, and revision.                    |
-| `GET /api/members`               | Bounded public directory; `q`, `cursor`, `limit` (1–50).                                                              |
-| `POST /api/members`              | Explicit shared-editor creation of a display label (`displayName`), never a verified account.                         |
-| `GET /api/members/:id`           | Public member projection and paginated source history.                                                                |
-| `GET /api/entries`               | Recorded history with `memberId`, `from`, `to`, `dateBasis`, `q`, `venue`, `brewery`, `community`, `cursor`, `limit`. |
-| `GET /api/entries/:id`           | Source entry, ordered allocations, correction linkage, and remaining linked-correction allowance.                     |
-| `PUT /api/entries/:id/memory`    | Shared-editor public memory text update with `expectedVersion`; changes metadata without recording quantity.          |
-| `GET /api/milestones`            | Completed recorded-day milestone closes; no intraday crossing claim.                                                  |
-| `GET /api/memories/on-this-date` | Known supplied occurrence dates only, excluding private/system records.                                               |
-| `GET /api/recaps?period=YYYY-MM` | Recorded-month recap and contributing history; `YYYY` selects a year.                                                 |
+| Method/path                      | Purpose                                                                                                                                                     |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /health`                    | Process liveness; no database guarantee.                                                                                                                    |
+| `GET /ready`                     | Database/schema checks, non-secret Worker version tag, server-enforced capabilities, and revision.                                                          |
+| `GET /api/members`               | Bounded public directory; `q`, `cursor`, `limit` (1–50).                                                                                                    |
+| `POST /api/members`              | Explicit shared-editor creation of a display label (`displayName`), never a verified account.                                                               |
+| `GET /api/members/:id`           | Public member projection and paginated source history.                                                                                                      |
+| `GET /api/entries`               | Recorded history with `memberId`, `from`, `to`, `dateBasis`, `q`, `venue`, `brewery`, `city`, `community`, `cursor`, `limit`, optional expected `revision`. |
+| `GET /api/entries/:id`           | Source entry, ordered allocations, correction linkage, and remaining linked-correction allowance.                                                           |
+| `PUT /api/entries/:id/memory`    | Shared-editor public memory text update with `expectedVersion`; changes metadata without recording quantity.                                                |
+| `GET /api/milestones`            | Completed recorded-day milestone closes; no intraday crossing claim.                                                                                        |
+| `GET /api/memories/on-this-date` | Known supplied occurrence dates only, excluding private/system records.                                                                                     |
+| `GET /api/recaps?period=YYYY-MM` | Recorded-month recap and contributing history; `YYYY` selects a year.                                                                                       |
 
 History cursors order by immutable recording time and ID, so equal timestamps have a deterministic tie-breaker. Occurrence filters use a separate stored local occurrence day; unknown occurrence dates are not invented. Search uses parameterized, bounded values and escapes SQL wildcard characters. Summary retains only a bounded recent window; full history is fetched separately.
+
+Community read responses now include the revision from the same D1 batch as their public data. Recap totals/highlights share all record filters, omitting the cursor only for complete aggregates; actual available months share the non-period filters. Public archive export is bounded cursor pagination with an expected revision on every later page and a final revision check. Any intervening insert or supported privacy/metadata/projection change aborts the export for restart. No historical privacy snapshot, browser archive cache, new table or migration is introduced. See [the public export contract](api-v3.md#complete-public-archive-export).
+
+Mutation throttling combines the existing salted IP/session budget with an IP-only budget ten times larger to accommodate shared networks. Login cannot clear that network bucket. Exact accepted ledger retries are resolved after authentication but before consuming either write budget; they cannot be converted into new attempts to evade a throttle. This is network abuse control, not authenticated personal identity.
 
 Entry extensions are optional: allocation `memberId`, `occurredAt` (ISO instant), `occurrenceTimezone` (IANA timezone), `occurrencePrecision` (`day` or `minute`), `memory`, and `correctionOfEntryId`. Memory text fields are `title`, `shortNote`, `venue`, `city`, `beer`, and `brewery`; each is optional. New mutation capabilities default off in the migration. Supported exact retries still resolve while disabled; ordinary legacy quantity recording stays available.
 
