@@ -1,6 +1,6 @@
 # Guarded release and recovery
 
-See [upgrade-plan.md](upgrade-plan.md) for actual execution status. These instructions are a resumable procedure, not proof of a completed deployment. All raw exports, SQL plans, row manifests, account metadata, and live screenshots stay in protected storage outside Git.
+See [next-release-plan.md](next-release-plan.md) for the October 16 release status and [upgrade-plan.md](upgrade-plan.md) for the historical September upgrade. These instructions are a resumable procedure, not proof of a completed deployment. All raw exports, SQL plans, row manifests, account metadata, and live screenshots stay in protected storage outside Git.
 
 ## Before any production operation
 

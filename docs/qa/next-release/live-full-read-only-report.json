@@ -1,0 +1,285 @@
+{
+  "status": "passed",
+  "expectedCommit": "8f1245f0f9fb6eb46e64df59982ffc3955b56a46",
+  "readOnly": true,
+  "screenshots": false,
+  "physicalDevices": false,
+  "archiveDataRetained": false,
+  "cases": [
+    {
+      "browser": "chromium",
+      "viewport": "1440x1000 desktop",
+      "status": "passed",
+      "publicReadRequests": 38,
+      "blockedWrites": 0,
+      "consoleErrors": 0,
+      "pageErrors": 0,
+      "networkErrors": 0,
+      "navigationCanceledReads": 0,
+      "explicitlyCanceledExportReads": 0,
+      "navigationCancellationConsoleMessages": 0,
+      "exportCancellationConsoleMessages": 0,
+      "archiveResults": [
+        {
+          "format": "json",
+          "status": "complete",
+          "batches": 1,
+          "records": 1,
+          "revisionConsistent": true,
+          "finalRevisionCheck": true,
+          "artifactDeleted": true
+        },
+        {
+          "format": "csv",
+          "status": "complete",
+          "batches": 1,
+          "records": 1,
+          "revisionConsistent": true,
+          "finalRevisionCheck": true,
+          "artifactDeleted": true
+        },
+        {
+          "format": "json",
+          "status": "canceled",
+          "fileCreated": false
+        }
+      ],
+      "recapControlsVerified": true,
+      "routesVerified": 8,
+      "imageFormatsVerified": 3,
+      "physicalDevice": false
+    },
+    {
+      "browser": "chromium",
+      "viewport": "390x844 mobile emulation",
+      "status": "passed",
+      "publicReadRequests": 38,
+      "blockedWrites": 0,
+      "consoleErrors": 0,
+      "pageErrors": 0,
+      "networkErrors": 0,
+      "navigationCanceledReads": 0,
+      "explicitlyCanceledExportReads": 0,
+      "navigationCancellationConsoleMessages": 0,
+      "exportCancellationConsoleMessages": 0,
+      "archiveResults": [
+        {
+          "format": "json",
+          "status": "complete",
+          "batches": 1,
+          "records": 1,
+          "revisionConsistent": true,
+          "finalRevisionCheck": true,
+          "artifactDeleted": true
+        },
+        {
+          "format": "csv",
+          "status": "complete",
+          "batches": 1,
+          "records": 1,
+          "revisionConsistent": true,
+          "finalRevisionCheck": true,
+          "artifactDeleted": true
+        },
+        {
+          "format": "json",
+          "status": "canceled",
+          "fileCreated": false
+        }
+      ],
+      "recapControlsVerified": true,
+      "routesVerified": 8,
+      "imageFormatsVerified": 3,
+      "physicalDevice": false
+    },
+    {
+      "browser": "firefox",
+      "viewport": "1440x1000 desktop",
+      "status": "passed",
+      "publicReadRequests": 44,
+      "blockedWrites": 0,
+      "consoleErrors": 0,
+      "pageErrors": 0,
+      "networkErrors": 0,
+      "navigationCanceledReads": 1,
+      "explicitlyCanceledExportReads": 1,
+      "navigationCancellationConsoleMessages": 0,
+      "exportCancellationConsoleMessages": 0,
+      "archiveResults": [
+        {
+          "format": "json",
+          "status": "complete",
+          "batches": 1,
+          "records": 1,
+          "revisionConsistent": true,
+          "finalRevisionCheck": true,
+          "artifactDeleted": true
+        },
+        {
+          "format": "csv",
+          "status": "complete",
+          "batches": 1,
+          "records": 1,
+          "revisionConsistent": true,
+          "finalRevisionCheck": true,
+          "artifactDeleted": true
+        },
+        {
+          "format": "json",
+          "status": "canceled",
+          "fileCreated": false
+        }
+      ],
+      "recapControlsVerified": true,
+      "routesVerified": 8,
+      "imageFormatsVerified": 3,
+      "physicalDevice": false
+    },
+    {
+      "browser": "firefox",
+      "viewport": "390x844 mobile emulation",
+      "status": "passed",
+      "publicReadRequests": 45,
+      "blockedWrites": 0,
+      "consoleErrors": 0,
+      "pageErrors": 0,
+      "networkErrors": 0,
+      "navigationCanceledReads": 1,
+      "explicitlyCanceledExportReads": 1,
+      "navigationCancellationConsoleMessages": 0,
+      "exportCancellationConsoleMessages": 0,
+      "archiveResults": [
+        {
+          "format": "json",
+          "status": "complete",
+          "batches": 1,
+          "records": 1,
+          "revisionConsistent": true,
+          "finalRevisionCheck": true,
+          "artifactDeleted": true
+        },
+        {
+          "format": "csv",
+          "status": "complete",
+          "batches": 1,
+          "records": 1,
+          "revisionConsistent": true,
+          "finalRevisionCheck": true,
+          "artifactDeleted": true
+        },
+        {
+          "format": "json",
+          "status": "canceled",
+          "fileCreated": false
+        }
+      ],
+      "recapControlsVerified": true,
+      "routesVerified": 8,
+      "imageFormatsVerified": 3,
+      "physicalDevice": false
+    },
+    {
+      "browser": "webkit",
+      "viewport": "1440x1000 desktop",
+      "status": "passed",
+      "publicReadRequests": 42,
+      "blockedWrites": 0,
+      "consoleErrors": 0,
+      "pageErrors": 0,
+      "networkErrors": 0,
+      "navigationCanceledReads": 1,
+      "explicitlyCanceledExportReads": 1,
+      "navigationCancellationConsoleMessages": 0,
+      "exportCancellationConsoleMessages": 0,
+      "archiveResults": [
+        {
+          "format": "json",
+          "status": "complete",
+          "batches": 1,
+          "records": 1,
+          "revisionConsistent": true,
+          "finalRevisionCheck": true,
+          "artifactDeleted": true
+        },
+        {
+          "format": "csv",
+          "status": "complete",
+          "batches": 1,
+          "records": 1,
+          "revisionConsistent": true,
+          "finalRevisionCheck": true,
+          "artifactDeleted": true
+        },
+        {
+          "format": "json",
+          "status": "canceled",
+          "fileCreated": false
+        }
+      ],
+      "recapControlsVerified": true,
+      "routesVerified": 8,
+      "imageFormatsVerified": 3,
+      "physicalDevice": false
+    },
+    {
+      "browser": "webkit",
+      "viewport": "390x844 mobile emulation",
+      "status": "passed",
+      "publicReadRequests": 41,
+      "blockedWrites": 0,
+      "consoleErrors": 0,
+      "pageErrors": 0,
+      "networkErrors": 0,
+      "navigationCanceledReads": 1,
+      "explicitlyCanceledExportReads": 1,
+      "navigationCancellationConsoleMessages": 0,
+      "exportCancellationConsoleMessages": 0,
+      "archiveResults": [
+        {
+          "format": "json",
+          "status": "complete",
+          "batches": 1,
+          "records": 1,
+          "revisionConsistent": true,
+          "finalRevisionCheck": true,
+          "artifactDeleted": true
+        },
+        {
+          "format": "csv",
+          "status": "complete",
+          "batches": 1,
+          "records": 1,
+          "revisionConsistent": true,
+          "finalRevisionCheck": true,
+          "artifactDeleted": true
+        },
+        {
+          "format": "json",
+          "status": "canceled",
+          "fileCreated": false
+        }
+      ],
+      "recapControlsVerified": true,
+      "routesVerified": 8,
+      "imageFormatsVerified": 3,
+      "physicalDevice": false
+    }
+  ],
+  "commit": "8f1245f0f9fb6eb46e64df59982ffc3955b56a46",
+  "coverage": [
+    "public-dashboard-total",
+    "public-eight-routes",
+    "base-path-assets",
+    "partnership-api-metrics-and-existing-contact",
+    "three-share-preview-formats",
+    "names-off-by-default",
+    "installation-raster-maskable-ios-assets",
+    "honest-online-requirement",
+    "no-editor-session",
+    "no-mutation-requests",
+    "recap-month-year-navigation-and-api-aggregate-match",
+    "public-json-csv-revision-pinning-completeness",
+    "explicit-export-cancel-no-file",
+    "archive-downloads-deleted"
+  ]
+}
