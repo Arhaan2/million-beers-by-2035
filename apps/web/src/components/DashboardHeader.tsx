@@ -1,59 +1,117 @@
+import type { ReactNode } from 'react';
+
 interface Props {
+  section: string;
   loggedIn: boolean;
-  degraded: boolean;
-  lastSuccessAt: number | null;
   onLogin: () => void;
   onAdd: () => void;
   onLogout: () => void;
 }
 
-export function DashboardHeader({
-  loggedIn,
+export function ConnectionStatus({
   degraded,
   lastSuccessAt,
-  onLogin,
-  onAdd,
-  onLogout,
-}: Props) {
+}: {
+  degraded: boolean;
+  lastSuccessAt: number | null;
+}) {
   return (
-    <header className="site-header">
-      <a className="brand-lockup" href="#/" aria-label="The Million Beer Project dashboard">
-        <div className="mug-mark" aria-hidden="true">
-          <svg viewBox="0 0 48 48" role="img">
-            <path d="M9 14h25v26H15a6 6 0 0 1-6-6V14Z" />
-            <path d="M34 20h4a6 6 0 0 1 0 12h-4" />
-            <path d="M13 14c0-4 5-7 9-3 3-5 10-3 10 3" />
-            <path d="M17 21v12M25 21v12" />
-          </svg>
-        </div>
-        <div>
-          <h1>The Million Beer Project</h1>
-          <p className="subtitle">One crew. One impossible number. By 2035.</p>
-        </div>
-      </a>
-      <div className="header-actions">
-        <p className={`connection ${degraded ? 'connection--degraded' : ''}`} role="status">
-          <span aria-hidden="true" />
-          {degraded
-            ? 'Connection degraded'
-            : lastSuccessAt
-              ? `Updated ${new Intl.DateTimeFormat('en', { timeStyle: 'short' }).format(lastSuccessAt)}`
-              : 'Connecting'}
-        </p>
-        {loggedIn ? (
-          <div className="button-row">
-            <button className="button button--primary" onClick={onAdd}>
-              Record entry
-            </button>
-            <button className="button button--quiet" onClick={onLogout}>
-              Log out
-            </button>
-          </div>
-        ) : (
-          <button className="button button--outline" onClick={onLogin}>
-            Crew login
-          </button>
-        )}
+    <p
+      className={`ledger-status${degraded ? ' ledger-status--delayed' : lastSuccessAt ? ' ledger-status--live' : ''}`}
+      role="status"
+    >
+      <span aria-hidden="true" />
+      {degraded
+        ? 'Connection degraded'
+        : lastSuccessAt
+          ? `Updated ${new Intl.DateTimeFormat('en', { timeStyle: 'short' }).format(lastSuccessAt)}`
+          : 'Connecting'}
+    </p>
+  );
+}
+
+export function ProjectMark() {
+  return (
+    <img
+      className="project-mark"
+      alt=""
+      width="46"
+      height="46"
+      src={`${import.meta.env.BASE_URL}app-icon.svg`}
+    />
+  );
+}
+
+function LoginIcon() {
+  return (
+    <svg
+      viewBox="0 0 20 20"
+      width="17"
+      height="17"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.55"
+      aria-hidden="true"
+    >
+      <circle cx="10" cy="6.3" r="3.1" />
+      <path d="M3.7 16.3c.5-3.3 2.6-5 6.3-5s5.8 1.7 6.3 5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+const destinations = [
+  ['', 'Dashboard'],
+  ['crew', 'Crew'],
+  ['history', 'History'],
+  ['recaps', 'Recaps'],
+  ['about', 'About'],
+] as const;
+
+export function DashboardHeader({ section, loggedIn, onLogin, onAdd, onLogout }: Props) {
+  const Name = section ? 'h1' : 'span';
+  const auth: ReactNode = loggedIn ? (
+    <>
+      <button className="button button--primary" onClick={onAdd}>
+        Record entry
+      </button>
+      <button className="button button--quiet" onClick={onLogout}>
+        Log out
+      </button>
+    </>
+  ) : (
+    <button className="button button--outline crew-login" onClick={onLogin}>
+      <LoginIcon /> Crew login
+    </button>
+  );
+  return (
+    <header className="ledger-header">
+      <div className="ledger-header__inner">
+        <a className="project-brand" href="#/" aria-label="The Million Beer Project dashboard">
+          <ProjectMark />
+          <Name className="project-wordmark">
+            The Million
+            <br />
+            Beer Project
+          </Name>
+        </a>
+        <nav className="ledger-nav" aria-label="Main navigation">
+          {destinations.map(([slug, label]) => (
+            <a
+              key={slug}
+              href={`#/${slug}`}
+              aria-current={
+                section === slug ||
+                (slug === 'crew' && section === 'member') ||
+                (slug === 'history' && section === 'entry')
+                  ? 'page'
+                  : undefined
+              }
+            >
+              {label}
+            </a>
+          ))}
+        </nav>
+        <div className="ledger-auth">{auth}</div>
       </div>
     </header>
   );

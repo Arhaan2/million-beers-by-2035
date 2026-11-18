@@ -9,7 +9,8 @@ import {
   MilestoneHistory,
   RecapsPage,
 } from './components/CommunityPages';
-import { DashboardHeader } from './components/DashboardHeader';
+import { ConnectionStatus, DashboardHeader, ProjectMark } from './components/DashboardHeader';
+import { ProjectCover } from './components/ProjectCover';
 import { InstallGuidance } from './components/InstallGuidance';
 import { PartnersPage, ProjectShare } from './components/PartnersPage';
 import { Leaderboard } from './components/Leaderboard';
@@ -262,12 +263,9 @@ function App() {
         >
           Skip to main content
         </a>
-        <div className="ambient ambient--one" />
-        <div className="ambient ambient--two" />
         <DashboardHeader
           loggedIn={Boolean(session)}
-          degraded={degraded}
-          lastSuccessAt={lastSuccessAt}
+          section={section}
           onLogin={() => {
             setToast(null);
             modalTrigger.current =
@@ -278,30 +276,17 @@ function App() {
           onAdd={() => record()}
           onLogout={logout}
         />
-        <nav className="main-nav" aria-label="Main navigation">
-          {[
-            ['', 'Dashboard'],
-            ['crew', 'Crew'],
-            ['history', 'History'],
-            ['recaps', 'Recaps'],
-            ['about', 'About'],
-          ].map(([slug, label]) => (
-            <a
-              key={slug}
-              href={`#/${slug}`}
-              aria-current={
-                section === slug ||
-                (slug === 'crew' && section === 'member') ||
-                (slug === 'history' && section === 'entry')
-                  ? 'page'
-                  : undefined
-              }
-            >
-              {label}
-            </a>
-          ))}
-        </nav>
         <main id="main-content" tabIndex={-1}>
+          {!section ? (
+            <ProjectCover
+              hasSavedAttempt={Boolean(readDraft()?.attempt)}
+              onRecord={() => record()}
+            />
+          ) : (
+            <div className="inner-connection">
+              <ConnectionStatus degraded={degraded} lastSuccessAt={lastSuccessAt} />
+            </div>
+          )}
           {saveNotice ? (
             <div className="save-notice" role="status">
               <span>{saveNotice}</span>
@@ -419,101 +404,72 @@ function App() {
             />
           ) : summary && metrics ? (
             <>
-              <h2 id="page-title" className="sr-only" tabIndex={-1}>
-                Dashboard
-              </h2>
-              <div className="hero-grid">
-                <ProgressDisplay
-                  total={summary.stats.total}
-                  target={summary.challenge.target}
-                  remaining={summary.stats.remaining}
-                  percent={summary.stats.percentComplete}
-                />
-                <section className="gather-panel">
-                  <p className="eyebrow">The next chapter starts here</p>
-                  <h2>
-                    Good company. <br /> A shared story.
-                  </h2>
-                  <p>A place for the occasions, familiar faces and little details along the way.</p>
-                  <button className="button button--primary" onClick={() => record()}>
-                    {readDraft()?.attempt ? 'Resolve saved submission' : 'Record entry'}
-                  </button>
-                  <p className="deadline">
-                    Until {metrics.deadline}
-                    <br />
-                    <span>{summary.challenge.timezone.replaceAll('_', ' ')}</span>
-                  </p>
-                </section>
-              </div>
-              <div className="collective-milestone">
-                <span>
-                  {summary.stats.total >= summary.challenge.target
-                    ? 'Collective goal reached'
-                    : 'Next collective milestone'}
-                </span>
-                <strong>{formatInteger(metrics.milestone)}</strong>
-                <span>
-                  {formatInteger(Math.max(0, metrics.milestone - summary.stats.total))} away · net
-                  of corrections
-                </span>
-              </div>
-              <section className="crew-strip" aria-label="Crew overview">
-                <div className="crew-strip__avatars" aria-hidden="true">
-                  {(summary.leaderboard.length
-                    ? summary.leaderboard.slice(0, 4).map((member) => member.contributor)
-                    : ['M', 'B']
-                  ).map((name, index) => (
-                    <span className="avatar" key={`${name}-${index}`}>
-                      {name.slice(0, 2)}
-                    </span>
-                  ))}
+              <section className="scoreboard" aria-labelledby="scoreboard-title">
+                <div className="ledger-section-title">
+                  <h2 id="scoreboard-title">The scoreboard</h2>
+                  <ConnectionStatus degraded={degraded} lastSuccessAt={lastSuccessAt} />
                 </div>
-                <div>
-                  <h2>A shared ledger, a growing crew.</h2>
-                  <p>
-                    {community
-                      ? `${community.namedContributors} named contributors · ${community.activeParticipants} recent active participants`
-                      : `${summary.stats.crewSize} named contributor records`}
-                  </p>
-                </div>
-                <a href="#/crew">
-                  Meet the crew <span aria-hidden="true">↗</span>
-                </a>
-              </section>
-              <div className="section-heading">
-                <div>
-                  <p className="eyebrow">Keep more than the number</p>
-                  <h2>Recent moments & activity</h2>
-                </div>
-                <a href="#/history">Explore all history →</a>
-              </div>
-              <div className="content-grid">
-                <ActivityFeed
-                  entries={(
-                    summary.recentCommunityEntries ??
-                    summary.recentEntries.filter((entry) => !entry.isSystem)
-                  ).slice(0, 6)}
-                  timezone={timezone}
-                />
-                <aside className="panel story-panel">
-                  <p className="eyebrow">Made for remembering</p>
-                  <h2>The occasion matters.</h2>
-                  <p>
-                    A title, a familiar place, a small note. Add a little context when you record,
-                    or return to the saved record later.
-                  </p>
-                  <a href="#/recaps">Look back through recaps →</a>
-                  <div className="story-mark" aria-hidden="true">
-                    01M<span>BY 2035</span>
+                <div className="tally-sheet">
+                  <ProgressDisplay
+                    total={summary.stats.total}
+                    target={summary.challenge.target}
+                    remaining={summary.stats.remaining}
+                    percent={summary.stats.percentComplete}
+                  />
+                  <div className="tally-column">
+                    <p className="tally-label">
+                      {summary.stats.total >= summary.challenge.target
+                        ? 'Collective goal reached'
+                        : 'Next milestone'}
+                    </p>
+                    <strong className="tally-figure">{formatInteger(metrics.milestone)}</strong>
+                    <p className="tally-foot">
+                      {formatInteger(Math.max(0, metrics.milestone - summary.stats.total))} beers
+                      away
+                    </p>
                   </div>
-                </aside>
+                  <div className="tally-column">
+                    <p className="tally-label">The crew</p>
+                    <strong className="tally-figure">
+                      {formatInteger(community?.namedContributors ?? summary.stats.crewSize)}
+                    </strong>
+                    <p className="tally-foot">
+                      {community
+                        ? 'Named contributors'
+                        : `${summary.stats.crewSize} named contributor records`}
+                    </p>
+                    <a className="tally-link" href="#/crew">
+                      Meet the crew
+                    </a>
+                  </div>
+                </div>
+              </section>
+              <div className="ledger-spread">
+                <div>
+                  <ActivityFeed
+                    entries={(
+                      summary.recentCommunityEntries ??
+                      summary.recentEntries.filter((entry) => !entry.isSystem)
+                    ).slice(0, 6)}
+                    timezone={timezone}
+                  />
+                  <a className="spread-link" href="#/history">
+                    View all history
+                  </a>
+                </div>
+                <div>
+                  <TrendChart days={summary.dailyTotals} />
+                  <a className="spread-link" href="#/recaps">
+                    Explore crew recaps
+                  </a>
+                </div>
               </div>
-              <TrendChart days={summary.dailyTotals} />
               <details className="statistics">
                 <summary>
                   Explore the numbers <span>Collective pace, forecasts & audit counts</span>
                 </summary>
                 <p className="helper">
+                  The collective deadline is {metrics.deadline} ({timezone.replaceAll('_', ' ')}).{' '}
                   Pace and finish dates are mathematical extrapolations, not predictions or personal
                   recommendations.
                 </p>
@@ -568,6 +524,11 @@ function App() {
                   />
                 </div>
                 <ProjectShare summary={summary} lastSuccessAt={lastSuccessAt} />
+                {community ? (
+                  <p className="helper">
+                    {formatInteger(community.activeParticipants)} recent active participants.
+                  </p>
+                ) : null}
                 <div className="secondary-ledger">
                   <Leaderboard entries={summary.leaderboard} />
                   <MilestoneHistory revision={summary.revision ?? 0} />
@@ -577,8 +538,8 @@ function App() {
           ) : (
             <section className="loading-state" role="status">
               <div className="loading-mark" aria-hidden="true" />
-              <h2 id="page-title" tabIndex={-1}>
-                {loading ? 'Lighting up the scoreboard…' : 'The scoreboard is temporarily offline'}
+              <h2 id={section ? 'page-title' : undefined} tabIndex={-1}>
+                {loading ? 'Loading the scoreboard…' : 'The scoreboard is temporarily offline'}
               </h2>
               <p>
                 {loading
@@ -598,7 +559,11 @@ function App() {
           )}
         </main>
         <InstallGuidance />
-        <footer>
+        <footer className="ledger-footer">
+          <a className="footer-brand" href="#/">
+            <ProjectMark />
+            The Million Beer Project
+          </a>
           <p>
             For adults of legal drinking age. Track responsibly. This counter is not a drinking
             recommendation. Never drink and drive.
@@ -609,7 +574,7 @@ function App() {
             target="_blank"
             rel="noreferrer"
           >
-            View the source on GitHub ↗
+            View source on GitHub
           </a>
         </footer>
       </div>
