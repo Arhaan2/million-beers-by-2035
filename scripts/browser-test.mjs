@@ -353,13 +353,18 @@ async function selectMember(page, label, name) {
   await page.getByRole('button', { name: `Select ${name}`, exact: true }).click();
 }
 
+async function clickForResponse(page, button, method, url) {
+  const [response] = await Promise.all([
+    page.waitForResponse(
+      (response) => response.url() === url && response.request().method() === method,
+    ),
+    page.getByRole('button', { name: button, exact: true }).click(),
+  ]);
+  return response;
+}
+
 async function submitAndCapture(page, button) {
-  const responsePromise = page.waitForResponse(
-    (response) =>
-      response.url() === `${apiOrigin}/api/entries` && response.request().method() === 'POST',
-  );
-  await page.getByRole('button', { name: button, exact: true }).click();
-  const response = await responsePromise;
+  const response = await clickForResponse(page, button, 'POST', `${apiOrigin}/api/entries`);
   assert.equal(response.status(), 201, 'A synthetic browser entry was not accepted.');
   const result = await response.json();
   await page.getByRole('dialog').waitFor({ state: 'hidden' });
@@ -453,14 +458,14 @@ async function verifyRecordingAndArchive({
     newName,
   );
   await page.getByRole('button', { name: 'Find in the full crew directory', exact: true }).click();
-  const createdResponse = page.waitForResponse(
-    (response) =>
-      response.url() === `${apiOrigin}/api/members` &&
-      response.request().method() === 'POST' &&
-      response.status() === 201,
+  const createdResponse = await clickForResponse(
+    page,
+    `Create “${newName}” as a member`,
+    'POST',
+    `${apiOrigin}/api/members`,
   );
-  await page.getByRole('button', { name: `Create “${newName}” as a member`, exact: true }).click();
-  const createdMember = (await (await createdResponse).json()).member;
+  assert.equal(createdResponse.status(), 201, 'Expected member creation to return HTTP 201.');
+  const createdMember = (await createdResponse.json()).member;
   await page.getByRole('button', { name: 'Member selected · change', exact: true }).waitFor();
   const createdEntry = await submitAndCapture(page, 'Record +1 beers');
   assert.equal(createdEntry.entry.allocations[0].memberId, createdMember.id);
@@ -526,11 +531,8 @@ async function verifyRecordingAndArchive({
   await loginDialog(page);
   assert.equal(memoryRequests, 1, 'Login automatically saved a metadata draft.');
   assert.equal(await page.getByLabel('Title', { exact: true }).inputValue(), newTitle);
-  const memoryResponse = page.waitForResponse(
-    (response) => response.url() === memoryUrl && response.status() === 200,
-  );
-  await page.getByRole('button', { name: 'Save memory details', exact: true }).click();
-  await memoryResponse;
+  const memoryResponse = await clickForResponse(page, 'Save memory details', 'PUT', memoryUrl);
+  assert.equal(memoryResponse.status(), 200, 'Expected memory update to return HTTP 200.');
   await page.getByRole('heading', { name: newTitle, exact: true }).waitFor();
   await page
     .getByText('Memory saved. Quantities and recording time are unchanged.', { exact: true })
@@ -1113,12 +1115,18 @@ async function browserCase(engineName, engine, mobile, fixtures) {
       physicalDevice: false,
     };
   } catch (error) {
+    const alerts = await page
+      .getByRole('dialog')
+      .getByRole('alert')
+      .allInnerTexts()
+      .catch(() => []);
+    const message = [`${label}/${stage}: ${error.message}`, ...alerts].filter(Boolean).join(' | ');
     await writeFile(
       path.join(evidence, `${label}-failure.json`),
-      JSON.stringify({ stage, message: error.message, appErrors, unexpectedNetwork }, null, 2),
+      JSON.stringify({ stage, message, appErrors, unexpectedNetwork }, null, 2),
       { mode: 0o600 },
     );
-    throw error;
+    throw new Error(message, { cause: error });
   } finally {
     await context.close();
     await browser.close();
