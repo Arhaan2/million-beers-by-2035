@@ -124,14 +124,17 @@ describe('community page feedback', () => {
   it('retries a directory request in place and preserves the current search input', async () => {
     vi.mocked(fetchMembers)
       .mockRejectedValueOnce(new Error('Connection unavailable.'))
-      .mockResolvedValueOnce({ members: [member], nextCursor: null });
+      .mockResolvedValueOnce({
+        members: [{ ...member, aliases: ['Sam', 'Sammy'] }],
+        nextCursor: null,
+      });
     const user = userEvent.setup();
     render(<CrewPage query="q=Sam" />);
     expect(await screen.findByRole('alert')).toHaveTextContent('Connection unavailable.');
     await user.type(screen.getByRole('searchbox'), ' Jones');
     await user.click(screen.getByRole('button', { name: 'Try again' }));
     expect(
-      await screen.findByRole('link', { name: /Sam 1 positive entries/u }),
+      await screen.findByRole('link', { name: /^Sam 1 positive entry Also listed as Sammy/u }),
     ).toBeInTheDocument();
     expect(screen.getByRole('searchbox')).toHaveValue('Sam Jones');
     expect(screen.getByRole('status')).toHaveTextContent('1 public member shown.');

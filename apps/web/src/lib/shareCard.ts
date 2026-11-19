@@ -63,10 +63,15 @@ export function renderShareCard(
   const story = format === 'story';
   const margin = landscape ? 56 : 72;
   const contentWidth = width - margin * 2;
-  context.fillStyle = '#100e0a';
+  const paper = '#f7f5ec';
+  const ink = '#132e25';
+  const secondary = '#465b4b';
+  context.fillStyle = paper;
   context.fillRect(0, 0, width, height);
-  context.fillStyle = '#f2a91e';
-  context.fillRect(margin, story ? 160 : 52, 64, 6);
+  context.fillStyle = ink;
+  context.fillRect(0, 0, width, story ? 266 : 107);
+  context.fillStyle = '#f2bd4d';
+  context.fillRect(0, story ? 266 : 107, width, 5);
   context.textBaseline = 'top';
 
   const block = (
@@ -77,9 +82,10 @@ export function renderShareCard(
     maxLines: number,
     color: string,
     weight = 400,
+    family = 'system-ui, sans-serif',
   ) => {
     context.fillStyle = color;
-    context.font = `${weight} ${fontSize}px system-ui, sans-serif`;
+    context.font = `${weight} ${fontSize}px ${family}`;
     const lines = wrapCardText(
       text,
       contentWidth,
@@ -88,15 +94,16 @@ export function renderShareCard(
     );
     lines.forEach((line, index) => context.fillText(line, margin, top + index * lineHeight));
   };
-  block('THE MILLION BEER PROJECT', story ? 205 : 83, 20, 26, 1, '#f2a91e', 700);
+  block('The Million Beer Project', story ? 172 : 37, 31, 40, 1, paper, 700);
   block(
     data.title,
     landscape ? 141 : story ? 340 : 180,
     landscape ? 52 : 68,
     landscape ? 62 : 82,
     landscape ? 2 : 3,
-    '#fff5df',
-    700,
+    ink,
+    400,
+    'Georgia, serif',
   );
   block(
     data.subtitle,
@@ -104,7 +111,7 @@ export function renderShareCard(
     landscape ? 25 : 32,
     landscape ? 34 : 43,
     landscape ? 2 : 3,
-    '#d5c9b3',
+    secondary,
   );
   data.lines.slice(0, 2).forEach((line, index) => {
     block(
@@ -113,7 +120,7 @@ export function renderShareCard(
       landscape ? 28 : 35,
       landscape ? 36 : 44,
       landscape ? 1 : 2,
-      '#ffd476',
+      ink,
       600,
     );
   });
@@ -124,17 +131,17 @@ export function renderShareCard(
       landscape ? 21 : 27,
       landscape ? 28 : 36,
       landscape ? 2 : story ? 6 : 3,
-      '#d5c9b3',
+      secondary,
     );
   }
   const footer = story ? 1660 : height - 95;
-  context.strokeStyle = '#755b30';
+  context.strokeStyle = '#9b9f89';
   context.beginPath();
   context.moveTo(margin, footer);
   context.lineTo(width - margin, footer);
   context.stroke();
-  block('One crew. A shared record. By 2035.', footer + 22, landscape ? 20 : 24, 31, 1, '#d5c9b3');
-  if (story) block('Recorded moments, kept together.', footer + 65, 23, 30, 1, '#d5c9b3');
+  block('One crew. A shared record. By 2035.', footer + 22, landscape ? 20 : 24, 31, 1, secondary);
+  if (story) block('Recorded moments, kept together.', footer + 65, 23, 30, 1, secondary);
 }
 
 export function shareCardBlob(canvas: HTMLCanvasElement): Promise<Blob> {

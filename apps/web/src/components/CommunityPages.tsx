@@ -8,6 +8,7 @@ import {
   fetchMembers,
   fetchRecap,
 } from '../lib/api';
+import { normalizeParticipantName } from '../lib/entryAllocations';
 import { formatInteger, formatTimestamp } from '../lib/format';
 import type { BeerEntry, Capabilities, DashboardSummary, EntryPage, Recap } from '../lib/types';
 import { ActivityFeed } from './ActivityFeed';
@@ -159,25 +160,32 @@ export function CrewPage({
               : `${formatInteger(page.members.length)} public member${page.members.length === 1 ? '' : 's'} shown${page.nextCursor ? ' · More available' : ''}.`}
           </p>
           <div className="crew-grid">
-            {page.members.map((member) => (
-              <a
-                className="crew-card"
-                key={member.id}
-                href={`#/member/${encodeURIComponent(member.id)}`}
-              >
-                <span className="avatar avatar--large" aria-hidden="true">
-                  {member.displayName.slice(0, 2)}
-                </span>
-                <div>
-                  <h3>{member.displayName}</h3>
-                  <p>{formatInteger(member.participationCount)} positive entries participated in</p>
-                  {member.aliases.length ? (
-                    <small>Also listed as {member.aliases.join(', ')}</small>
-                  ) : null}
-                </div>
-                <span aria-hidden="true">↗</span>
-              </a>
-            ))}
+            {page.members.map((member) => {
+              const name = normalizeParticipantName(member.displayName);
+              const aliases = member.aliases.filter(
+                (alias) => normalizeParticipantName(alias) !== name,
+              );
+              return (
+                <a
+                  className="crew-card"
+                  key={member.id}
+                  href={`#/member/${encodeURIComponent(member.id)}`}
+                >
+                  <span className="avatar avatar--large" aria-hidden="true">
+                    {member.displayName.slice(0, 2)}
+                  </span>
+                  <div>
+                    <h3>{member.displayName}</h3>
+                    <p>
+                      {formatInteger(member.participationCount)} positive{' '}
+                      {member.participationCount === 1 ? 'entry' : 'entries'}
+                    </p>
+                    {aliases.length ? <small>Also listed as {aliases.join(', ')}</small> : null}
+                  </div>
+                  <span aria-hidden="true">↗</span>
+                </a>
+              );
+            })}
           </div>
           {!page.members.length ? (
             <p className="page-status">No public members match this search.</p>
